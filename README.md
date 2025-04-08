@@ -11,13 +11,16 @@ This project provides a REST API for managing document collections and performin
 - **Disk Persistence**: Automatic persistence of changes to disk
 - **REST API**: Clean API for document management and search operations
 - **Metadata Filtering**: Filter search results by document metadata
+- **Automatic Document Chunking**: Split large documents into smaller chunks for better processing
+- **Deduplication**: Remove duplicate chunks from search results
+- **Score Thresholding**: Filter out low-relevance results based on similarity score
 
 ## Installation
 
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/gedankrayze/splade_rest_api.git
+git clone https://github.com/yourusername/splade_rest_api.git
 cd splade_rest_api
 ```
 
@@ -79,6 +82,11 @@ API documentation is automatically generated and available at `http://localhost:
 
 - `GET /search/{collection_id}`: Search in a specific collection
 - `GET /search`: Search across all collections
+
+#### Advanced Search
+
+- `GET /advanced-search/{collection_id}`: Search in a specific collection with chunking and deduplication
+- `GET /advanced-search`: Search across all collections with chunking and deduplication
 
 ## Example Usage
 

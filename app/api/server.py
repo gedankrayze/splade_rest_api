@@ -1,0 +1,66 @@
+"""
+FastAPI server setup with router registration
+"""
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.middleware import ErrorHandlerMiddleware
+from app.api.routes import documents, search, collections, advanced_search
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="SPLADE Content Server",
+    description="An in-memory SPLADE content server with FAISS integration",
+    version="1.0.0",
+    # Disable automatic redirection when accessing routes without trailing slash
+    redirect_slashes=False
+)
+
+# Add middlewares
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add error handler middleware
+app.add_middleware(ErrorHandlerMiddleware)
+
+# Register routers
+app.include_router(collections.router, prefix="/collections", tags=["collections"])
+app.include_router(documents.router, prefix="/documents", tags=["documents"])
+app.include_router(search.router, prefix="/search", tags=["search"])
+app.include_router(advanced_search.router, prefix="/advanced-search", tags=["advanced-search"])
+
+
+@app.get("/", tags=["root"])
+async def root():
+    """Root endpoint returning service information"""
+    import os
+    from app.core.config import settings
+    from app.core.splade_service import splade_service
+
+    # Check if model directory exists
+    model_exists = os.path.exists(settings.MODEL_DIR)
+
+    # Check if SPLADE service is initialized
+    service_initialized = splade_service is not None
+
+    return {
+        "service": "SPLADE Content Server",
+        "version": "1.0.0",
+        "status": "operational" if service_initialized else "degraded",
+        "model": {
+            "path": settings.MODEL_DIR,
+            "exists": model_exists,
+            "loaded": service_initialized
+        },
+        "settings": {
+            "max_length": settings.MAX_LENGTH,
+            "data_dir": settings.DATA_DIR,
+            "default_top_k": settings.DEFAULT_TOP_K
+        }
+    }
