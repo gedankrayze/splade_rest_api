@@ -34,14 +34,20 @@ cd splade_rest_api
 pip install -r requirements.txt
 ```
 
-3. Download a pre-trained SPLADE model or use your own fine-tuned model.
+3. Download a pre-trained SPLADE model or use your own fine-tuned model. The server can automatically download the
+   `prithivida/Splade_PP_en_v2` model from Hugging Face on first run.
 
 ## Configuration
 
 You can configure the application using environment variables or a `.env` file:
 
 ### Core Settings
-- `SPLADE_MODEL_DIR`: Directory containing the SPLADE model (default: `./fine_tuned_splade`)
+
+- `SPLADE_MODEL_NAME`: Name of the model to use (default: `Splade_PP_en_v2`)
+- `SPLADE_MODEL_DIR`: Directory template for models (default: `./models/{model_name}`)
+- `SPLADE_MODEL_HF_ID`: Hugging Face model ID to download if model directory is empty (default:
+  `prithivida/Splade_PP_en_v2`)
+- `SPLADE_AUTO_DOWNLOAD_MODEL`: Whether to automatically download the model if not found (default: `true`)
 - `SPLADE_MAX_LENGTH`: Maximum sequence length for encoding (default: `512`)
 - `SPLADE_DATA_DIR`: Directory for storing data (default: `app/data`)
 - `SPLADE_DEFAULT_TOP_K`: Default number of search results (default: `10`)
