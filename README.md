@@ -14,6 +14,10 @@ This project provides a REST API for managing document collections and performin
 - **Automatic Document Chunking**: Split large documents into smaller chunks for better processing
 - **Deduplication**: Remove duplicate chunks from search results
 - **Score Thresholding**: Filter out low-relevance results based on similarity score
+- **Advanced FAISS Indexes**: Support for multiple FAISS index types for optimized search performance
+- **Soft Deletion**: Efficient document removal with delayed index rebuilding
+- **Large Document Handling**: Special processing for extremely large documents with tables
+- **Geo-Spatial Search**: Find documents based on geographical proximity
 
 ## Installation
 
@@ -36,10 +40,26 @@ pip install -r requirements.txt
 
 You can configure the application using environment variables or a `.env` file:
 
+### Core Settings
 - `SPLADE_MODEL_DIR`: Directory containing the SPLADE model (default: `./fine_tuned_splade`)
 - `SPLADE_MAX_LENGTH`: Maximum sequence length for encoding (default: `512`)
 - `SPLADE_DATA_DIR`: Directory for storing data (default: `app/data`)
 - `SPLADE_DEFAULT_TOP_K`: Default number of search results (default: `10`)
+
+### Performance Settings
+
+- `SPLADE_FAISS_INDEX_TYPE`: FAISS index type - "flat", "ivf", or "hnsw" (default: `flat`)
+- `SPLADE_FAISS_NLIST`: Number of clusters for IVF indexes (default: `100`)
+- `SPLADE_FAISS_HNSW_M`: Number of connections for HNSW graph (default: `32`)
+- `SPLADE_FAISS_SEARCH_NPROBE`: Number of clusters to search for IVF (default: `10`)
+- `SPLADE_SOFT_DELETE_ENABLED`: Enable soft deletion for documents (default: `true`)
+- `SPLADE_INDEX_REBUILD_THRESHOLD`: Rebuild index after this many deletions (default: `100`)
+
+### Chunking Settings
+
+- `SPLADE_MAX_CHUNK_SIZE`: Maximum tokens per chunk (default: `500`)
+- `SPLADE_TABLE_CHUNK_SIZE`: Maximum tokens for table chunks (default: `1000`)
+- `SPLADE_CHUNK_OVERLAP`: Overlap tokens between chunks (default: `50`)
 
 ## Running the Server
 
@@ -118,12 +138,44 @@ curl -X GET "http://localhost:8000/search/technical-docs?query=sparse%20lexical%
 curl -X GET "http://localhost:8000/search/technical-docs?query=sparse%20lexical%20retrieval&top_k=5&metadata_filter=%7B%22category%22%3A%22AI%22%7D"
 ```
 
-## Performance Considerations
+## Performance Optimizations
 
-- The SPLADE model runs most efficiently on a GPU.
-- For very large collections, consider using more sophisticated FAISS indexes like `IndexIVFFlat` or `IndexHNSWFlat`.
-- Document removal currently requires rebuilding the entire collection index, which can be expensive for large
-  collections.
+### FAISS Index Types
+
+The system supports different FAISS index types to optimize search performance:
+
+- **Flat**: Exact search with inner product similarity. Best for smaller collections (<100K documents) or when perfect
+  accuracy is required.
+- **IVF**: Inverted file structure with approximate search. 10-100x faster than Flat for large collections (100K-10M
+  documents).
+- **HNSW**: Hierarchical Navigable Small World graphs. Fastest search times for very large collections (1M+ documents).
+
+### Soft Deletion
+
+For improved performance when removing documents:
+
+- Documents are marked as "deleted" but physically remain in the index
+- Deleted documents are filtered out during search
+- The index is rebuilt after a configurable number of deletions
+- Greatly reduces the cost of document deletions
+
+### Large Document Handling
+
+Special handling for extremely large documents:
+
+- Hierarchical document segmentation for very large documents
+- Special table handling to preserve their structure
+- Adaptive chunking strategies based on content type
+- Optimized for documents of any size, including 140+ page documents
+
+## Additional Documentation
+
+For more detailed information, see the documentation in the `docs/` directory:
+
+- [Document Chunking and Deduplication](docs/chunking_and_deduplication.md)
+- [Large Document Handling](docs/large_document_handling.md)
+- [Performance Optimizations](docs/performance_optimizations.md)
+- [Geo-Spatial Search](docs/geo_spatial_search.md)
 
 ## License
 
