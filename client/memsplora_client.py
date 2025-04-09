@@ -1,140 +1,184 @@
-import argparse
+
+"""
+MemSplora REST API Client
+A comprehensive client for interacting with the MemSplora API endpoints.
+"""
+
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import requests
 
 
 class MemSploraClient:
-    """Client for connecting to the MemSplora advanced search API."""
+    """Client for interacting with all MemSplora API endpoints."""
 
     def __init__(self, base_url: str, api_key: Optional[str] = None):
         """
-        Initialize the search API client.
+        Initialize the API client.
 
         Args:
             base_url: Base URL of the API server (e.g., 'https://api.example.com')
             api_key: Optional API key for authentication
         """
         self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
-        self.headers = {}
+        self.headers = {'Content-Type': 'application/json'}
         if api_key:
             self.headers['Authorization'] = f'Bearer {api_key}'
 
+    # Collection Management
+    def list_collections(self) -> Dict[str, List[Dict[str, Any]]]:
+        """List all collections."""
+        response = requests.get(f'{self.base_url}/collections', headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    def get_collection(self, collection_id: str) -> Dict[str, Any]:
+        """Get collection details."""
+        response = requests.get(f'{self.base_url}/collections/{collection_id}', headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    def get_collection_stats(self, collection_id: str) -> Dict[str, Any]:
+        """Get collection statistics."""
+        response = requests.get(f'{self.base_url}/collections/{collection_id}/stats', headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    def create_collection(self, collection_id: str, name: str, description: Optional[str] = None) -> Dict[str, Any]:
+        """Create a new collection."""
+        data = {"id": collection_id, "name": name, "description": description}
+        response = requests.post(f'{self.base_url}/collections', headers=self.headers, json=data)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_collection(self, collection_id: str) -> None:
+        """Delete a collection."""
+        response = requests.delete(f'{self.base_url}/collections/{collection_id}', headers=self.headers)
+        response.raise_for_status()
+
+    # Document Management
+    def add_document(self, collection_id: str, document: Dict[str, Any]) -> Dict[str, Any]:
+        """Add a document to a collection."""
+        response = requests.post(f'{self.base_url}/documents/{collection_id}', headers=self.headers, json=document)
+        response.raise_for_status()
+        return response.json()
+
+    def batch_add_documents(self, collection_id: str, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Add multiple documents to a collection in batch."""
+        response = requests.post(
+            f'{self.base_url}/documents/{collection_id}/batch',
+            headers=self.headers,
+            json={"documents": documents}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_document(self, collection_id: str, document_id: str) -> Dict[str, Any]:
+        """Get a document from a collection."""
+        response = requests.get(f'{self.base_url}/documents/{collection_id}/{document_id}', headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_document(self, collection_id: str, document_id: str) -> None:
+        """Delete a document from a collection."""
+        response = requests.delete(f'{self.base_url}/documents/{collection_id}/{document_id}', headers=self.headers)
+        response.raise_for_status()
+
+    # Search Operations
+    def search(self, collection_id: str, query: str, top_k: int = 10,
+               metadata_filter: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Perform a basic search in a collection."""
+        params = {'query': query, 'top_k': top_k}
+        if metadata_filter:
+            params['metadata_filter'] = json.dumps(metadata_filter)
+        
+        response = requests.get(f'{self.base_url}/search/{collection_id}', headers=self.headers, params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def search_all(self, query: str, top_k: int = 10,
+                   metadata_filter: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Search across all collections."""
+        params = {'query': query, 'top_k': top_k}
+        if metadata_filter:
+            params['metadata_filter'] = json.dumps(metadata_filter)
+        
+        response = requests.get(f'{self.base_url}/search', headers=self.headers, params=params)
+        response.raise_for_status()
+        return response.json()
+
     def advanced_search(
-            self,
-            collection_name: str,
-            query: str,
-            top_k: int = 10,
-            min_score: float = 0.3,
-            metadata_filter: Optional[Dict[str, Any]] = None,
-            deduplicate: bool = True,
-            merge_chunks: bool = True
+        self,
+        collection_id: str,
+        query: str,
+        top_k: int = 10,
+        min_score: float = 0.3,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        deduplicate: bool = True,
+        merge_chunks: bool = True
     ) -> Dict[str, Any]:
-        """
-        Perform an advanced search on the specified collection.
-
-        Args:
-            collection_name: Name of the collection to search
-            query: Search query text
-            top_k: Number of results to return
-            min_score: Minimum similarity score threshold (0-1)
-            metadata_filter: Dictionary of metadata filters
-            deduplicate: Deduplicate results from same document
-            merge_chunks: Merge chunks from the same document
-
-        Returns:
-            Search results as a dictionary
-        """
-
-        # Construct the endpoint URL
-        endpoint = f'/advanced-search/{collection_name}'
-
-        # Build query parameters
+        """Perform an advanced search with chunking and deduplication."""
         params = {
-            'query': query,  # The API will handle encoding
+            'query': query,
             'top_k': top_k,
             'min_score': min_score,
             'deduplicate': deduplicate,
             'merge_chunks': merge_chunks
         }
-
-        # Add metadata filter if provided
         if metadata_filter:
             params['metadata_filter'] = json.dumps(metadata_filter)
 
-        # Make the API request
-        url = f'{self.base_url}{endpoint}'
-        response = requests.get(url, params=params, headers=self.headers)
-
-        # Check for successful response
+        response = requests.get(f'{self.base_url}/advanced-search/{collection_id}', headers=self.headers, params=params)
         response.raise_for_status()
+        return response.json()
 
-        # Return the JSON response
+    def advanced_search_all(
+        self,
+        query: str,
+        top_k: int = 10,
+        min_score: float = 0.3,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        deduplicate: bool = True,
+        merge_chunks: bool = True
+    ) -> Dict[str, Any]:
+        """Perform an advanced search across all collections."""
+        params = {
+            'query': query,
+            'top_k': top_k,
+            'min_score': min_score,
+            'deduplicate': deduplicate,
+            'merge_chunks': merge_chunks
+        }
+        if metadata_filter:
+            params['metadata_filter'] = json.dumps(metadata_filter)
+
+        response = requests.get(f'{self.base_url}/advanced-search', headers=self.headers, params=params)
+        response.raise_for_status()
         return response.json()
 
 
-# Example usage
 if __name__ == '__main__':
-    # Set up command line argument parsing
-    parser = argparse.ArgumentParser(description='Search the MemSplora API')
-    parser.add_argument('query', help='Search query text')
-    parser.add_argument('--collection', '-c', default='your_collection',
-                        help='Collection name to search')
-    parser.add_argument('--top-k', '-k', type=int, default=20,
-                        help='Number of results to return')
-    parser.add_argument('--min-score', '-s', type=float, default=0.8,
-                        help='Minimum similarity score threshold (0-1)')
-    parser.add_argument('--url', '-u', default='http://localhost:3000',
-                        help='API server URL')
-    parser.add_argument('--api-key', '-a', default='your_api_key_here',
-                        help='API key for authentication')
-
-    args = parser.parse_args()
-
-    # Initialize the client
-    client = MemSploraClient(args.url, args.api_key)
-
-    # Perform the search with command line arguments
-    results = client.advanced_search(
-        collection_name=args.collection,
-        query=args.query,
-        top_k=args.top_k,
-        min_score=args.min_score
+    # Example usage
+    client = MemSploraClient('http://localhost:3000')
+    
+    # Create a collection
+    collection = client.create_collection(
+        'sample-collection',
+        'Sample Collection',
+        'A sample collection for testing'
     )
-
-    # Print the results
-    print(f"Found {len(results.get('results', []))} results:")
-    print(f"Query time: {results.get('query_time_ms', 'N/A')} ms")
-
-    for i, result in enumerate(results.get('results', []), 1):
-        print(f"\n--- Result {i} ---")
-        print(f"ID: {result.get('id', 'N/A')}")
-        print(f"Score: {result.get('score', 'N/A')}")
-
-        # Print content with a character limit for display
-        content = result.get('content', 'N/A')
-        if len(content) > 100:
-            print(f"Content: {content[:100]}...")
-        else:
-            print(f"Content: {content}")
-
-        # Handle metadata if present
-        if 'metadata' in result:
-            print("\nMetadata:")
-            metadata = result['metadata']
-
-            # Print source information
-            if 'source' in metadata:
-                print(f"  Source: {metadata['source']}")
-            if 'source_filename' in metadata:
-                print(f"  Source filename: {metadata['source_filename']}")
-
-            # Print products as a formatted list if present
-            if 'products' in metadata and isinstance(metadata['products'], list):
-                print(f"  Products ({len(metadata['products'])}):")
-                for product in metadata['products'][:5]:  # Show first 5 products
-                    print(f"    - {product}")
-                if len(metadata['products']) > 5:
-                    print(f"    - ... and {len(metadata['products']) - 5} more")
+    print("Created collection:", collection)
+    
+    # Add a document
+    doc = {
+        "id": "doc1",
+        "content": "This is a sample document",
+        "metadata": {"category": "test"}
+    }
+    result = client.add_document('sample-collection', doc)
+    print("Added document:", result)
+    
+    # Perform a search
+    search_results = client.advanced_search('sample-collection', 'sample document')
+    print("Search results:", search_results)
