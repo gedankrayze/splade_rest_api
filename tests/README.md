@@ -49,6 +49,7 @@ choco install hurl
    hurl --test --color tests/02_collections.hurl
    hurl --test --color tests/03_documents.hurl
    hurl --test --color tests/04_search.hurl
+   hurl --test --color tests/05_advanced_search.hurl
    ```
 
 ## Test Overview

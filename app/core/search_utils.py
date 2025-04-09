@@ -34,7 +34,7 @@ def deduplicate_and_threshold_results(
     if len(filtered_results) != len(results):
         logger.debug(
             f"Filtered out {len(results) - len(filtered_results)} results below score threshold {min_score_threshold}")
-
+    
     # If no deduplication needed, return thresholded results
     if not deduplicate_by_original_id:
         return filtered_results

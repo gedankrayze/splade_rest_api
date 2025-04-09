@@ -2,20 +2,35 @@
 FastAPI server setup with router registration
 """
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.middleware import ErrorHandlerMiddleware
 from app.api.routes import documents, search, collections, advanced_search
+from app.core.config import settings
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# App version
+APP_VERSION = "1.0.1"
 
 # Initialize FastAPI app
 app = FastAPI(
     title="SPLADE Content Server",
     description="An in-memory SPLADE content server with FAISS integration",
-    version="1.0.0",
+    version=APP_VERSION,
     # Disable automatic redirection when accessing routes without trailing slash
     redirect_slashes=False
 )
+
+# Log startup info
+logger.info(f"Starting SPLADE Content Server v{APP_VERSION}")
+logger.info(f"Model directory: {settings.MODEL_DIR}")
+logger.info(f"Min score threshold: {settings.MIN_SCORE_THRESHOLD}")
+logger.info(f"Default results per query: {settings.DEFAULT_TOP_K}")
 
 # Add middlewares
 app.add_middleware(
@@ -34,7 +49,6 @@ app.include_router(collections.router, prefix="/collections", tags=["collections
 app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(advanced_search.router, prefix="/advanced-search", tags=["advanced-search"])
-
 
 @app.get("/", tags=["root"])
 async def root():

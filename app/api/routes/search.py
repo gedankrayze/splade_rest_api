@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, status, Depends
 
 from app.api.dependencies import get_splade_service
 from app.core.config import settings
-from app.core.splade_service import SpladeService
+from app.core.splade_service import SpladeService  # For type hints only
 from app.models.schema import SearchResponse
 
 router = APIRouter()

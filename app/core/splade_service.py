@@ -174,14 +174,14 @@ class SpladeCollection:
 
             # Search FAISS index - get more results than needed to account for filtering
             scores, indices = self.index.search(
-                query_vector_normalized.reshape(1, -1),
+                query_vector_normalized.reshape(1, -1), 
                 min(top_k * 3, self.index.ntotal)  # Get extra results for filtering
             )
 
             results = []
             for i, idx in enumerate(indices[0]):
                 # Skip invalid indices or scores below threshold
-                if idx == -1 or idx not in self.index_to_id or scores[0][i] < min_score:
+                if idx == -1 or idx not in self.index_to_id or scores[0][i] < min_score:  
                     continue
 
                 doc_id = self.index_to_id[idx]

@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, status, Depends
 from app.api.dependencies import get_splade_service
 from app.core.config import settings
 from app.core.search_utils import deduplicate_and_threshold_results, merge_chunk_content
-from app.core.splade_service import SpladeService
+from app.core.splade_service import SpladeService  # For type hints only
 from app.models.schema import SearchResponse
 
 router = APIRouter()
@@ -59,7 +59,7 @@ async def advanced_search(
     results, query_time = splade_service.search(
         collection_id,
         query,
-        effective_top_k,
+        effective_top_k, 
         filter_metadata
     )
 
@@ -117,7 +117,7 @@ async def advanced_search_all(
 
     # Perform raw search
     search_results = splade_service.search_all_collections(
-        query,
+        query, 
         top_k * 3,  # Get more results for filtering
         filter_metadata
     )

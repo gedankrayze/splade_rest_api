@@ -22,8 +22,7 @@ class Settings(BaseSettings):
 
     # Search settings
     DEFAULT_TOP_K: int = 10
-    MIN_SCORE_THRESHOLD: float = 0.3
-
+    MIN_SCORE_THRESHOLD: float = 0.3  # Minimum similarity score for results
     class Config:
         env_file = ".env"
         env_prefix = "SPLADE_"
