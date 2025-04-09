@@ -12,6 +12,7 @@ This documentation covers the MemSplora API client libraries for interacting wit
     - [Collection Management](#collection-management)
     - [Document Management](#document-management)
     - [Search Operations](#search-operations)
+  - [Geo-Spatial Search](#geo-spatial-search)
 - [Data Types](#data-types)
 - [Examples](#examples)
     - [Synchronous Client Examples](#synchronous-client-examples)
@@ -128,6 +129,7 @@ collection = await client.get_collection("technical-docs")
   "id": "technical-docs",
   "name": "Technical Documentation",
   "description": "Technical documentation for our products",
+  "model_name": "custom-model-name",
   "stats": {
     "id": "technical-docs",
     "name": "Technical Documentation",
@@ -173,11 +175,13 @@ Creates a new collection.
 ```python
 # Synchronous
 collection = client.create_collection("technical-docs", "Technical Documentation",
-                                      "Technical documentation for our products")
+                                      "Technical documentation for our products",
+                                      model_name="custom-model-name")
 
 # Asynchronous
 collection = await client.create_collection("technical-docs", "Technical Documentation",
-                                            "Technical documentation for our products")
+                                           "Technical documentation for our products",
+                                           model_name="custom-model-name")
 ```
 
 **Parameters**:
@@ -185,6 +189,7 @@ collection = await client.create_collection("technical-docs", "Technical Documen
 - `collection_id` (string): The ID for the new collection
 - `name` (string): The display name of the collection
 - `description` (string, optional): A description of the collection
+- `model_name` (string, optional): Domain-specific model to use for this collection
 
 **Returns**: `Collection` with the structure:
 
@@ -192,7 +197,8 @@ collection = await client.create_collection("technical-docs", "Technical Documen
 {
   "id": "technical-docs",
   "name": "Technical Documentation",
-  "description": "Technical documentation for our products"
+  "description": "Technical documentation for our products",
+  "model_name": "custom-model-name"
 }
 ```
 
@@ -225,7 +231,8 @@ Adds a document to a collection.
 document = {
     "id": "doc-001",
     "content": "SPLADE is a sparse lexical model for information retrieval",
-    "metadata": {"category": "AI", "author": "John Doe"}
+    "metadata": {"category": "AI", "author": "John Doe"},
+    "location": {"latitude": 37.7749, "longitude": -122.4194}  # Optional location
 }
 result = client.add_document("technical-docs", document)
 
@@ -240,6 +247,7 @@ result = await client.add_document("technical-docs", document)
     - `id` (string): Unique document identifier
     - `content` (string): Document content to index
     - `metadata` (dict, optional): Additional document metadata
+  - `location` (dict, optional): Geographic coordinates as {latitude: float, longitude: float}
 
 **Returns**: `DocumentAddResponse` with the structure:
 
@@ -260,7 +268,8 @@ documents = [
     {
         "id": "doc-001",
         "content": "SPLADE is a sparse lexical model for information retrieval",
-        "metadata": {"category": "AI", "author": "John Doe"}
+        "metadata": {"category": "AI", "author": "John Doe"},
+        "location": {"latitude": 37.7749, "longitude": -122.4194}
     },
     {
         "id": "doc-002",
@@ -277,7 +286,7 @@ result = await client.batch_add_documents("technical-docs", documents)
 **Parameters**:
 
 - `collection_id` (string): The ID of the collection to add the documents to
-- `documents` (list): List of document objects to add
+- `documents` (list): List of document objects to add, each can include location data
 
 **Returns**: `BatchAddResponse` with the structure:
 
@@ -314,6 +323,10 @@ document = await client.get_document("technical-docs", "doc-001")
   "metadata": {
     "category": "AI",
     "author": "John Doe"
+  },
+  "location": {
+    "latitude": 37.7749,
+    "longitude": -122.4194
   }
 }
 ```
@@ -346,11 +359,13 @@ Performs a basic search within a specific collection.
 ```python
 # Synchronous
 results = client.search("technical-docs", "neural networks", top_k=5,
-                        metadata_filter={"category": "AI"})
+                        metadata_filter={"category": "AI"},
+                        min_score=0.3)
 
 # Asynchronous
 results = await client.search("technical-docs", "neural networks", top_k=5,
-                              metadata_filter={"category": "AI"})
+                             metadata_filter={"category": "AI"},
+                             min_score=0.3)
 ```
 
 **Parameters**:
@@ -359,6 +374,7 @@ results = await client.search("technical-docs", "neural networks", top_k=5,
 - `query` (string): The search query
 - `top_k` (int, optional): Number of results to return (default: 10)
 - `metadata_filter` (dict, optional): Filter results by metadata fields
+- `min_score` (float, optional): Minimum similarity score threshold (default: 0.3)
 
 **Returns**: `SearchResponse` with the structure:
 
@@ -387,11 +403,13 @@ Performs a search across all collections.
 ```python
 # Synchronous
 results = client.search_all("neural networks", top_k=5,
-                            metadata_filter={"category": "AI"})
+                            metadata_filter={"category": "AI"},
+                            min_score=0.3)
 
 # Asynchronous
 results = await client.search_all("neural networks", top_k=5,
-                                  metadata_filter={"category": "AI"})
+                                 metadata_filter={"category": "AI"},
+                                 min_score=0.3)
 ```
 
 **Parameters**:
@@ -399,6 +417,7 @@ results = await client.search_all("neural networks", top_k=5,
 - `query` (string): The search query
 - `top_k` (int, optional): Number of results to return per collection (default: 10)
 - `metadata_filter` (dict, optional): Filter results by metadata fields
+- `min_score` (float, optional): Minimum similarity score threshold (default: 0.3)
 
 **Returns**: `MultiCollectionSearchResponse` with the structure:
 
@@ -497,9 +516,104 @@ results = await client.advanced_search_all(
 
 **Returns**: `MultiCollectionSearchResponse` with the structure similar to `search_all`.
 
+### Geo-Spatial Search
+
+Perform searches based on geographic location by adding location parameters to search methods:
+
+#### Adding Documents with Location Data
+
+```python
+# Add document with location
+document = {
+    "id": "restaurant-123",
+    "content": "Italian restaurant in San Francisco",
+    "metadata": {"type": "restaurant", "cuisine": "italian"},
+    "location": {
+        "latitude": 37.7749,
+        "longitude": -122.4194
+    }
+}
+client.add_document("places", document)
+```
+
+#### Searching by Geographic Location
+
+```python
+# Synchronous geo-search
+geo_results = client.search(
+    "places",
+    "restaurant",
+    geo_search={
+        "latitude": 37.7745,  # Search center point
+        "longitude": -122.4190,
+        "radius_km": 2.0  # Search radius in kilometers
+    }
+)
+
+# Asynchronous geo-search
+geo_results = await client.search(
+    "places",
+    "restaurant",
+    geo_search={
+        "latitude": 37.7745,
+        "longitude": -122.4190,
+        "radius_km": 2.0
+    }
+)
+```
+
+Results include distance information:
+
+```json
+{
+  "results": [
+    {
+      "id": "restaurant-123",
+      "content": "Italian restaurant in San Francisco",
+      "metadata": {"type": "restaurant", "cuisine": "italian"},
+      "location": {"latitude": 37.7749, "longitude": -122.4194},
+      "distance_km": 0.53,
+      "score": 0.92
+    },
+    ...
+  ],
+  "query_time_ms": 8.7
+}
+```
+
+#### Advanced Geo-Spatial Search
+
+Combine location-based search with other advanced features:
+
+```python
+results = client.advanced_search(
+    "places",
+    "italian restaurant",
+    metadata_filter={"cuisine": "italian"},
+    deduplicate=True,
+    merge_chunks=True,
+    geo_search={
+        "latitude": 37.7745,
+        "longitude": -122.4190,
+        "radius_km": 5.0
+    }
+)
+```
+
 ## Data Types
 
 The MemSplora client libraries define several types to provide type safety and better IDE support:
+
+### GeoCoordinates
+
+Represents geographic coordinates.
+
+```python
+GeoCoordinates = TypedDict('GeoCoordinates', {
+    'latitude': float,
+    'longitude': float
+})
+```
 
 ### Document
 
@@ -509,7 +623,8 @@ Represents a document in a collection.
 Document = TypedDict('Document', {
     'id': str,
     'content': str,
-    'metadata': Optional[Dict[str, Any]]
+    'metadata': Optional[Dict[str, Any]],
+    'location': Optional[GeoCoordinates]  # Geographic location
 })
 ```
 
@@ -522,7 +637,9 @@ SearchResult = TypedDict('SearchResult', {
     'id': str,
     'content': str,
     'metadata': Optional[Dict[str, Any]],
-    'score': float
+    'score': float,
+    'location': Optional[GeoCoordinates],  # Geographic location
+    'distance_km': Optional[float]  # Distance from search point (geo-search only)
 })
 ```
 
@@ -556,7 +673,8 @@ Represents a collection.
 Collection = TypedDict('Collection', {
     'id': str,
     'name': str,
-    'description': Optional[str]
+    'description': Optional[str],
+    'model_name': Optional[str]  # Domain-specific model name
 })
 ```
 
@@ -593,6 +711,51 @@ client.add_document("technical-docs", document)
 results = client.search("technical-docs", "neural networks", top_k=5)
 for result in results["results"]:
     print(f"{result['id']} (score: {result['score']}): {result['content'][:50]}...")
+```
+
+#### Geo-Spatial Search Example
+
+```python
+from memsplora_client import MemSploraClient
+
+# Initialize the client
+client = MemSploraClient("http://localhost:3000")
+
+# Add documents with location data
+places = [
+    {
+        "id": "place-1",
+        "content": "Golden Gate Bridge in San Francisco",
+        "metadata": {"type": "landmark"},
+        "location": {"latitude": 37.8199, "longitude": -122.4783}
+    },
+    {
+        "id": "place-2",
+        "content": "Fisherman's Wharf - Popular tourist area",
+        "metadata": {"type": "tourist-area"},
+        "location": {"latitude": 37.8080, "longitude": -122.4177}
+    }
+]
+
+for place in places:
+    client.add_document("sf-places", place)
+
+# Search for places near a specific location
+results = client.search(
+    "sf-places",
+    "tourist",
+    geo_search={
+        "latitude": 37.7749,  # San Francisco downtown
+        "longitude": -122.4194,
+        "radius_km": 5.0  # 5 km radius
+    }
+)
+
+# Display results with distances
+for result in results["results"]:
+    name = result["content"].split(" - ")[0]
+    distance = result.get("distance_km", "unknown")
+    print(f"{name} - {distance} km away")
 ```
 
 #### Batch Processing
@@ -751,7 +914,7 @@ asyncio.run(main())
 2. **Use the Async Client for Concurrent Operations**: When making multiple API calls, use the async client with
    `asyncio.gather()` to execute operations concurrently.
 
-3. **Filter Early**: Use metadata filters to reduce result sets early in the pipeline.
+3. **Filter Early**: Use metadata filters and geo-spatial filters to reduce result sets early in the pipeline.
 
 4. **Set Appropriate Score Thresholds**: Use `min_score` in advanced search to filter out low-quality matches.
 
@@ -783,3 +946,11 @@ finally:
 2. **Retry Transient Failures**: Consider implementing retry logic for transient errors (5xx status codes).
 
 3. **Log Detailed Error Information**: Log the full response content for debugging.
+
+### Geo-Spatial Search Optimization
+
+1. **Set Appropriate Radius**: Too large a radius can slow down searches and return irrelevant results.
+
+2. **Combine with Text Queries**: For best results, combine geo-spatial search with relevant text queries.
+
+3. **Use Metadata Filters with Geo-Search**: Further refine results by combining location filters with metadata filters.

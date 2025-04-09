@@ -11,7 +11,7 @@ import aiohttp
 from memsplora_types import (
     Collection, CollectionList, CollectionDetails, CollectionStats,
     Document, SearchResponse, MultiCollectionSearchResponse,
-    DocumentAddResponse, BatchAddResponse
+    DocumentAddResponse, BatchAddResponse, GeoSearchParams
 )
 
 
@@ -99,14 +99,34 @@ class MemSploraAsyncClient:
 
     # Document Management
     async def add_document(self, collection_id: str, document: Dict[str, Any]) -> DocumentAddResponse:
-        """Add a document to a collection."""
+        """
+        Add a document to a collection.
+        
+        Args:
+            collection_id: ID of the collection to add to
+            document: Document to add. Can include:
+                - id: Document ID
+                - content: Document text content
+                - metadata: Optional metadata dictionary
+                - location: Optional geographic coordinates {latitude: float, longitude: float}
+        """
         async with self.session.post(f'{self.base_url}/documents/{collection_id}', headers=self.headers,
                                      json=document) as response:
             response.raise_for_status()
             return await response.json()
 
     async def batch_add_documents(self, collection_id: str, documents: List[Dict[str, Any]]) -> BatchAddResponse:
-        """Add multiple documents to a collection in batch."""
+        """
+        Add multiple documents to a collection in batch.
+        
+        Args:
+            collection_id: ID of the collection to add to
+            documents: List of documents to add. Each document can include:
+                - id: Document ID
+                - content: Document text content
+                - metadata: Optional metadata dictionary
+                - location: Optional geographic coordinates {latitude: float, longitude: float}
+        """
         async with self.session.post(
                 f'{self.base_url}/documents/{collection_id}/batch',
                 headers=self.headers,
@@ -131,15 +151,41 @@ class MemSploraAsyncClient:
     # Search Operations
     @overload
     async def search(self, collection_id: str, query: str, top_k: int = 10,
-                     metadata_filter: Optional[Dict[str, Any]] = None) -> SearchResponse:
+                     metadata_filter: Optional[Dict[str, Any]] = None,
+                     min_score: float = 0.3,
+                     geo_search: Optional[GeoSearchParams] = None) -> SearchResponse:
         ...
 
     async def search(self, collection_id: str, query: str, top_k: int = 10,
-                     metadata_filter: Optional[Dict[str, Any]] = None) -> SearchResponse:
-        """Perform a basic search in a collection."""
-        params = {'query': query, 'top_k': top_k}
+                     metadata_filter: Optional[Dict[str, Any]] = None,
+                     min_score: float = 0.3,
+                     geo_search: Optional[GeoSearchParams] = None) -> SearchResponse:
+        """
+        Perform a basic search in a collection.
+        
+        Args:
+            collection_id: ID of the collection to search
+            query: Search query text
+            top_k: Number of results to return
+            metadata_filter: Optional metadata filter dictionary
+            min_score: Minimum similarity score threshold (0-1)
+            geo_search: Optional geographic search parameters:
+                {
+                    latitude: float,
+                    longitude: float,
+                    radius_km: float  # Default: 10.0
+                }
+        """
+        params = {'query': query, 'top_k': top_k, 'min_score': min_score}
         if metadata_filter:
             params['metadata_filter'] = json.dumps(metadata_filter)
+
+        # Add geo search parameters if provided
+        if geo_search and 'latitude' in geo_search and 'longitude' in geo_search:
+            params['latitude'] = geo_search['latitude']
+            params['longitude'] = geo_search['longitude']
+            if 'radius_km' in geo_search:
+                params['radius_km'] = geo_search['radius_km']
 
         async with self.session.get(
                 f'{self.base_url}/search/{collection_id}',
@@ -150,11 +196,34 @@ class MemSploraAsyncClient:
             return await response.json()
 
     async def search_all(self, query: str, top_k: int = 10,
-                         metadata_filter: Optional[Dict[str, Any]] = None) -> MultiCollectionSearchResponse:
-        """Search across all collections."""
-        params = {'query': query, 'top_k': top_k}
+                         metadata_filter: Optional[Dict[str, Any]] = None,
+                         min_score: float = 0.3,
+                         geo_search: Optional[GeoSearchParams] = None) -> MultiCollectionSearchResponse:
+        """
+        Search across all collections.
+        
+        Args:
+            query: Search query text
+            top_k: Number of results to return per collection
+            metadata_filter: Optional metadata filter dictionary
+            min_score: Minimum similarity score threshold (0-1)
+            geo_search: Optional geographic search parameters:
+                {
+                    latitude: float,
+                    longitude: float,
+                    radius_km: float  # Default: 10.0
+                }
+        """
+        params = {'query': query, 'top_k': top_k, 'min_score': min_score}
         if metadata_filter:
             params['metadata_filter'] = json.dumps(metadata_filter)
+
+        # Add geo search parameters if provided
+        if geo_search and 'latitude' in geo_search and 'longitude' in geo_search:
+            params['latitude'] = geo_search['latitude']
+            params['longitude'] = geo_search['longitude']
+            if 'radius_km' in geo_search:
+                params['radius_km'] = geo_search['radius_km']
 
         async with self.session.get(
                 f'{self.base_url}/search',
@@ -172,9 +241,27 @@ class MemSploraAsyncClient:
             min_score: float = 0.3,
             metadata_filter: Optional[Dict[str, Any]] = None,
             deduplicate: bool = True,
-            merge_chunks: bool = True
+            merge_chunks: bool = True,
+            geo_search: Optional[GeoSearchParams] = None
     ) -> SearchResponse:
-        """Perform an advanced search with chunking and deduplication."""
+        """
+        Perform an advanced search with chunking and deduplication.
+        
+        Args:
+            collection_id: ID of the collection to search
+            query: Search query text
+            top_k: Number of results to return
+            min_score: Minimum similarity score threshold (0-1)
+            metadata_filter: Optional metadata filter dictionary
+            deduplicate: Whether to deduplicate results from same document
+            merge_chunks: Whether to merge chunks from the same document
+            geo_search: Optional geographic search parameters:
+                {
+                    latitude: float,
+                    longitude: float,
+                    radius_km: float  # Default: 10.0
+                }
+        """
         params = {
             'query': query,
             'top_k': top_k,
@@ -184,6 +271,13 @@ class MemSploraAsyncClient:
         }
         if metadata_filter:
             params['metadata_filter'] = json.dumps(metadata_filter)
+
+        # Add geo search parameters if provided
+        if geo_search and 'latitude' in geo_search and 'longitude' in geo_search:
+            params['latitude'] = geo_search['latitude']
+            params['longitude'] = geo_search['longitude']
+            if 'radius_km' in geo_search:
+                params['radius_km'] = geo_search['radius_km']
 
         async with self.session.get(
                 f'{self.base_url}/advanced-search/{collection_id}',
@@ -200,9 +294,26 @@ class MemSploraAsyncClient:
             min_score: float = 0.3,
             metadata_filter: Optional[Dict[str, Any]] = None,
             deduplicate: bool = True,
-            merge_chunks: bool = True
+            merge_chunks: bool = True,
+            geo_search: Optional[GeoSearchParams] = None
     ) -> MultiCollectionSearchResponse:
-        """Perform an advanced search across all collections."""
+        """
+        Perform an advanced search across all collections.
+        
+        Args:
+            query: Search query text
+            top_k: Number of results to return per collection
+            min_score: Minimum similarity score threshold (0-1)
+            metadata_filter: Optional metadata filter dictionary
+            deduplicate: Whether to deduplicate results from same document
+            merge_chunks: Whether to merge chunks from the same document
+            geo_search: Optional geographic search parameters:
+                {
+                    latitude: float,
+                    longitude: float,
+                    radius_km: float  # Default: 10.0
+                }
+        """
         params = {
             'query': query,
             'top_k': top_k,
@@ -212,6 +323,13 @@ class MemSploraAsyncClient:
         }
         if metadata_filter:
             params['metadata_filter'] = json.dumps(metadata_filter)
+
+        # Add geo search parameters if provided
+        if geo_search and 'latitude' in geo_search and 'longitude' in geo_search:
+            params['latitude'] = geo_search['latitude']
+            params['longitude'] = geo_search['longitude']
+            if 'radius_km' in geo_search:
+                params['radius_km'] = geo_search['radius_km']
 
         async with self.session.get(
                 f'{self.base_url}/advanced-search',

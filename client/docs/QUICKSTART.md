@@ -45,6 +45,47 @@ results = client.search("my-collection", "test document")
 print(f"Found {len(results['results'])} results")
 ```
 
+## Location-Based Search
+
+The client supports geo-spatial search capabilities for finding documents based on geographic location:
+
+```python
+from memsplora_client import MemSploraClient
+
+# Initialize the client
+client = MemSploraClient("http://localhost:3000")
+
+# Add a document with location data
+document = {
+    "id": "restaurant-001",
+    "content": "Italian Restaurant in San Francisco",
+    "metadata": {
+        "category": "restaurant",
+        "cuisine": "italian"
+    },
+    "location": {
+        "latitude": 37.7749,
+        "longitude": -122.4194
+    }
+}
+client.add_document("sf-restaurants", document)
+
+# Search for restaurants near a location
+results = client.search(
+    "sf-restaurants", 
+    "italian", 
+    geo_search={
+        "latitude": 37.7899,
+        "longitude": -122.4000,
+        "radius_km": 5.0  # Find results within 5km
+    }
+)
+
+# Display results with distances
+for result in results["results"]:
+    print(f"{result['id']} - Distance: {result.get('distance_km', 'N/A')} km")
+```
+
 ## Advanced Usage - Asynchronous Client
 
 The asynchronous client allows for concurrent operations and is suitable for high-throughput applications:
@@ -95,6 +136,20 @@ async def main():
 asyncio.run(main())
 ```
 
+## Domain-Specific Models
+
+You can create collections that use different embedding models:
+
+```python
+# Create a collection with a domain-specific model
+client.create_collection(
+    "medical-docs",
+    "Medical Documentation",
+    "Medical records and literature",
+    model_name="medical-splade-model"  # Custom model name
+)
+```
+
 ## Command Line Usage
 
 The MemSplora CLI provides a command-line interface to the API:
@@ -104,16 +159,19 @@ The MemSplora CLI provides a command-line interface to the API:
 python memsplora_cli.py --url http://localhost:3000 collections list
 
 # Create a collection
-python memsplora_cli.py collections create my-collection "My Collection" --description "A test collection"
+python memsplora_cli.py collections create my-collection "My Collection" --description "A test collection" --model-name "custom-model"
 
 # Add a document (from a JSON file)
 python memsplora_cli.py documents add my-collection document.json
 
-# Search
+# Basic search
 python memsplora_cli.py search "test query" --collection-id my-collection --top-k 5
 
 # Advanced search
 python memsplora_cli.py search "test query" --collection-id my-collection --mode advanced --min-score 0.3
+
+# Geo-spatial search
+python memsplora_cli.py search "restaurant" --collection-id places --latitude 37.7749 --longitude -122.4194 --radius-km 2.0
 ```
 
 ## Example Scripts
@@ -124,12 +182,14 @@ Check out the example scripts in the `examples` directory for more detailed usag
 - `batch_operations.py`: Batch operations with documents
 - `advanced_search.py`: Advanced search features
 - `async_client_example.py`: Using the asynchronous client
+- `geo_spatial_search.py`: Location-based search capabilities
+- `domain_specific_models.py`: Using custom embedding models
 
 Run an example:
 
 ```bash
 cd client
-python examples/basic_usage.py
+python examples/geo_spatial_search.py
 ```
 
 ## Next Steps
@@ -168,6 +228,13 @@ client.add_document("my-collection", {
     "metadata": {"key": "value"}
 })
 
+# Add a document with location
+client.add_document("places", {
+    "id": "place-001",
+    "content": "Eiffel Tower",
+    "location": {"latitude": 48.8584, "longitude": 2.2945}
+})
+
 # Add documents in batch
 client.batch_add_documents("my-collection", [
     {"id": "doc-001", "content": "First document"},
@@ -194,6 +261,17 @@ results = client.search(
     metadata_filter={"category": "article"}
 )
 
+# Geo-spatial search
+results = client.search(
+    "places",
+    "landmark",
+    geo_search={
+        "latitude": 48.8584,  # Paris
+        "longitude": 2.2945,
+        "radius_km": 1.0
+    }
+)
+
 # Advanced search with all options
 results = client.advanced_search(
     "my-collection",
@@ -202,7 +280,12 @@ results = client.advanced_search(
     min_score=0.5,
     metadata_filter={"category": "article"},
     deduplicate=True,
-    merge_chunks=True
+    merge_chunks=True,
+    geo_search={
+        "latitude": 48.8584,
+        "longitude": 2.2945,
+        "radius_km": 1.0
+    }
 )
 
 # Search across all collections

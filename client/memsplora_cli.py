@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 import argparse
 import json
@@ -21,6 +20,7 @@ def handle_collections(args: argparse.Namespace, client: MemSploraClient) -> Non
     elif args.action == "stats":
         print(json.dumps(client.get_collection_stats(args.id), indent=2))
 
+
 def handle_documents(args: argparse.Namespace, client: MemSploraClient) -> None:
     if args.action == "add":
         with open(args.file) as f:
@@ -38,28 +38,63 @@ def handle_documents(args: argparse.Namespace, client: MemSploraClient) -> None:
         client.delete_document(args.collection_id, args.id)
         print(f"Document {args.id} deleted successfully")
 
+
 def handle_search(args: argparse.Namespace, client: MemSploraClient) -> None:
     metadata_filter = json.loads(args.metadata_filter) if args.metadata_filter else None
+
+    # Create geo search parameters if latitude and longitude are provided
+    geo_search = None
+    if args.latitude is not None and args.longitude is not None:
+        geo_search = {
+            'latitude': args.latitude,
+            'longitude': args.longitude
+        }
+        if args.radius_km is not None:
+            geo_search['radius_km'] = args.radius_km
     
     if args.mode == "basic":
         if args.collection_id:
-            result = client.search(args.collection_id, args.query, args.top_k, metadata_filter)
+            result = client.search(
+                args.collection_id,
+                args.query,
+                args.top_k,
+                metadata_filter,
+                args.min_score,
+                geo_search
+            )
         else:
-            result = client.search_all(args.query, args.top_k, metadata_filter)
+            result = client.search_all(
+                args.query,
+                args.top_k,
+                metadata_filter,
+                args.min_score,
+                geo_search
+            )
     else:  # advanced
         if args.collection_id:
             result = client.advanced_search(
-                args.collection_id, args.query, args.top_k,
-                args.min_score, metadata_filter,
-                args.deduplicate, args.merge_chunks
+                args.collection_id,
+                args.query,
+                args.top_k,
+                args.min_score,
+                metadata_filter,
+                args.deduplicate,
+                args.merge_chunks,
+                geo_search
             )
         else:
             result = client.advanced_search_all(
-                args.query, args.top_k, args.min_score,
-                metadata_filter, args.deduplicate, args.merge_chunks
+                args.query,
+                args.top_k,
+                args.min_score,
+                metadata_filter,
+                args.deduplicate,
+                args.merge_chunks,
+                geo_search
             )
     
     print(json.dumps(result, indent=2))
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="MemSplora CLI")
@@ -113,12 +148,19 @@ def main() -> None:
     search_parser = subparsers.add_parser("search")
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument("--collection-id", help="Collection ID (optional)")
-    search_parser.add_argument("--mode", choices=["basic", "advanced"], default="basic")
+    search_parser.add_argument("--mode", choices=["basic", "advanced"], default="basic", help="Search mode")
     search_parser.add_argument("--top-k", type=int, default=10, help="Number of results")
     search_parser.add_argument("--metadata-filter", help="JSON metadata filter")
-    search_parser.add_argument("--min-score", type=float, default=0.3)
-    search_parser.add_argument("--deduplicate", action="store_true", default=True)
-    search_parser.add_argument("--merge-chunks", action="store_true", default=True)
+    search_parser.add_argument("--min-score", type=float, default=0.3, help="Minimum similarity score threshold (0-1)")
+    search_parser.add_argument("--deduplicate", action="store_true", default=True,
+                               help="Deduplicate results from same document")
+    search_parser.add_argument("--merge-chunks", action="store_true", default=True,
+                               help="Merge chunks from the same document")
+
+    # Geo-spatial search options
+    search_parser.add_argument("--latitude", type=float, help="Latitude for geo search (-90 to 90)")
+    search_parser.add_argument("--longitude", type=float, help="Longitude for geo search (-180 to 180)")
+    search_parser.add_argument("--radius-km", type=float, default=10.0, help="Search radius in kilometers")
     
     args = parser.parse_args()
     client = MemSploraClient(args.url, args.api_key)
@@ -133,6 +175,7 @@ def main() -> None:
     except Exception as e:
         print(f"Error: {str(e)}", file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
