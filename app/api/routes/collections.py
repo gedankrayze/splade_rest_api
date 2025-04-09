@@ -52,11 +52,12 @@ async def get_collection_stats(collection_id: str, splade_service: SpladeService
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=Collection)
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=Collection)
 async def create_collection(collection: Collection, splade_service: SpladeService = Depends(get_splade_service)):
-    """Create a new collection"""
+    """Create a new collection, optionally with a domain-specific model"""
     success = splade_service.create_collection(
         collection_id=collection.id,
         name=collection.name,
-        description=collection.description
+        description=collection.description,
+        model_name=collection.model_name
     )
 
     if not success:

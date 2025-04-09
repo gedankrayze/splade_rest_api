@@ -2,9 +2,19 @@
 Pydantic models for API request/response schemas
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
+
+
+class GeoCoordinates(BaseModel):
+    """Geographic coordinates model"""
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude in decimal degrees")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude in decimal degrees")
+
+    def to_tuple(self) -> Tuple[float, float]:
+        """Convert to (lat, lon) tuple"""
+        return (self.latitude, self.longitude)
 
 
 class Document(BaseModel):
@@ -12,8 +22,22 @@ class Document(BaseModel):
     id: str = Field(..., description="Unique document identifier")
     content: str = Field(..., description="Document content to be indexed")
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional document metadata")
+    location: Optional[GeoCoordinates] = Field(default=None, description="Geographic location of the document")
     source_id: Optional[str] = Field(default=None, description="Source document ID for chunked documents")
     chunk_index: Optional[int] = Field(default=None, description="Chunk index for chunked documents")
+
+    @validator('metadata', pre=True)
+    def handle_legacy_location(cls, v, values):
+        """Handle legacy location data in metadata for backward compatibility"""
+        if v and 'latitude' in v and 'longitude' in v:
+            # If we have location data in metadata but no location field,
+            # create the location object
+            if 'location' not in values or values['location'] is None:
+                values['location'] = GeoCoordinates(
+                    latitude=v['latitude'],
+                    longitude=v['longitude']
+                )
+        return v
 
 
 class DocumentBatch(BaseModel):
@@ -29,6 +53,13 @@ class SearchResult(BaseModel):
     score: float = Field(..., description="Relevance score")
 
 
+class GeoSearchParams(BaseModel):
+    """Geo-spatial search parameters"""
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude for geo search")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude for geo search")
+    radius_km: float = Field(default=10.0, gt=0, description="Search radius in kilometers")
+
+
 class SearchResponse(BaseModel):
     """Search response model"""
     results: List[SearchResult] = Field(..., description="Search results")
@@ -40,6 +71,7 @@ class Collection(BaseModel):
     id: str = Field(..., description="Unique collection identifier")
     name: str = Field(..., description="Collection name")
     description: Optional[str] = Field(default=None, description="Collection description")
+    model_name: Optional[str] = Field(default=None, description="Optional domain-specific model name")
 
 
 class CollectionList(BaseModel):

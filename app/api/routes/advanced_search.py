@@ -26,6 +26,10 @@ async def advanced_search(
         metadata_filter: Optional[str] = Query(None, description="JSON string of metadata filters"),
         deduplicate: bool = Query(True, description="Deduplicate results from same document"),
         merge_chunks: bool = Query(True, description="Merge chunks from the same document"),
+        latitude: Optional[float] = Query(None, description="Latitude for geo search", ge=-90.0, le=90.0),
+        longitude: Optional[float] = Query(None, description="Longitude for geo search", ge=-180.0, le=180.0),
+        radius_km: Optional[float] = Query(settings.GEO_DEFAULT_RADIUS_KM, description="Search radius in kilometers",
+                                           gt=0),
         splade_service: SpladeService = Depends(get_splade_service)
 ):
     """
@@ -34,6 +38,7 @@ async def advanced_search(
     - min_score: Only return results with similarity score >= this threshold (0.0-1.0)
     - deduplicate: Remove duplicate chunks from the same original document
     - merge_chunks: Merge content from chunks of the same document
+    - latitude/longitude/radius_km: Filter results by geographic location
     """
     # Check if collection exists
     if not splade_service.get_collection(collection_id):
@@ -53,14 +58,24 @@ async def advanced_search(
                 detail="Invalid metadata filter JSON"
             )
 
+    # Create geo filter if coordinates provided
+    geo_filter = None
+    if latitude is not None and longitude is not None:
+        geo_filter = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "radius_km": radius_km
+        }
+
     # Perform search with minimum score threshold 
     # But get more results than requested to allow for filtering
     effective_top_k = min(top_k * 3, 100)  # Get more but cap at 100
     results, query_time = splade_service.search(
         collection_id,
         query,
-        effective_top_k, 
-        filter_metadata
+        effective_top_k,
+        filter_metadata,
+        geo_filter
     )
 
     # Apply post-processing
@@ -95,6 +110,10 @@ async def advanced_search_all(
         metadata_filter: Optional[str] = Query(None, description="JSON string of metadata filters"),
         deduplicate: bool = Query(True, description="Deduplicate results from same document"),
         merge_chunks: bool = Query(True, description="Merge chunks from the same document"),
+        latitude: Optional[float] = Query(None, description="Latitude for geo search", ge=-90.0, le=90.0),
+        longitude: Optional[float] = Query(None, description="Longitude for geo search", ge=-180.0, le=180.0),
+        radius_km: Optional[float] = Query(settings.GEO_DEFAULT_RADIUS_KM, description="Search radius in kilometers",
+                                           gt=0),
         splade_service: SpladeService = Depends(get_splade_service)
 ):
     """
@@ -103,6 +122,7 @@ async def advanced_search_all(
     - min_score: Only return results with similarity score >= this threshold (0.0-1.0)
     - deduplicate: Remove duplicate chunks from the same original document
     - merge_chunks: Merge content from chunks of the same document
+    - latitude/longitude/radius_km: Filter results by geographic location
     """
     # Parse metadata filter if provided
     filter_metadata = None
@@ -115,11 +135,22 @@ async def advanced_search_all(
                 detail="Invalid metadata filter JSON"
             )
 
+    # Create geo filter if coordinates provided
+    geo_filter = None
+    if latitude is not None and longitude is not None:
+        geo_filter = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "radius_km": radius_km
+        }
+
     # Perform raw search
     search_results = splade_service.search_all_collections(
         query, 
         top_k * 3,  # Get more results for filtering
-        filter_metadata
+        filter_metadata,
+        geo_filter,
+        min_score
     )
 
     # Process each collection's results

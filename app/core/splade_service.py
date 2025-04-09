@@ -15,8 +15,11 @@ import torch
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 
 from app.core.chunking import document_chunker
-from app.core.config import settings
-from app.models.schema import Document
+from app.core.config import settings, FAISSIndexType
+from app.core.faiss_factory import FAISSIndexFactory
+from app.core.geo_spatial_index import GeoSpatialIndex
+from app.core.model_downloader import download_model_if_needed
+from app.models.schema import Document, GeoCoordinates
 
 # Configure logging
 logging.basicConfig(
@@ -37,7 +40,9 @@ class SpladeCollection:
             name: str,
             description: Optional[str] = None,
             vocab_size: int = 30522,  # Default BERT vocab size
-            data_dir: str = settings.DATA_DIR
+            data_dir: str = settings.DATA_DIR,
+            index_type: FAISSIndexType = settings.FAISS_INDEX_TYPE,
+            model_name: Optional[str] = None  # Optional specific model for this collection
     ):
         """Initialize a SPLADE collection with its own FAISS index"""
         self.id = collection_id
@@ -45,6 +50,8 @@ class SpladeCollection:
         self.description = description
         self.vocab_size = vocab_size
         self.data_dir = data_dir
+        self.index_type = index_type
+        self.model_name = model_name  # Store the model name used for this collection
 
         # Ensure data directory exists
         os.makedirs(data_dir, exist_ok=True)
@@ -59,8 +66,17 @@ class SpladeCollection:
         self.index_to_id = {}  # index in FAISS -> id
         self.next_index = 0  # Next index to use in FAISS
 
+        # Soft deletion tracking
+        self.soft_delete_enabled = settings.SOFT_DELETE_ENABLED
+        self.deleted_ids = set()  # Set of soft-deleted document IDs
+        self.deletion_count = 0  # Counter for tracking deletion threshold
+        self.rebuild_threshold = settings.INDEX_REBUILD_THRESHOLD
+
         # Initialize FAISS index
-        self.index = faiss.IndexFlatIP(vocab_size)
+        self.index = FAISSIndexFactory.create_index(vocab_size)
+
+        # Initialize geo-spatial index
+        self.geo_index = GeoSpatialIndex(precision=settings.GEO_INDEX_PRECISION)
 
         # Lock for thread safety
         self.lock = threading.RLock()
@@ -80,6 +96,16 @@ class SpladeCollection:
 
             # Add to FAISS index
             self.index.add(vector.reshape(1, -1))
+
+            # Add to geo-spatial index if location is present
+            if doc.location:
+                self.geo_index.add_document(
+                    doc.id,
+                    doc.location.latitude,
+                    doc.location.longitude
+                )
+                logger.debug(f"Added document {doc.id} to geo-spatial index at "
+                             f"({doc.location.latitude}, {doc.location.longitude})")
 
             # Store document and mapping
             self.documents[doc.id] = doc
@@ -138,11 +164,32 @@ class SpladeCollection:
                 logger.warning(f"Document with ID {doc_id} not found in collection {self.id}")
                 return False
 
-            # FAISS does not support direct removal, need to rebuild index
+            # Check if we should use soft deletion
+            if self.soft_delete_enabled:
+                # Mark document as deleted but keep it in the index
+                logger.info(f"Soft-deleting document {doc_id} from collection {self.id}")
+                self.deleted_ids.add(doc_id)
+                self.deletion_count += 1
+
+                # Save the updated deletion tracking
+                self._save_data()
+
+                # Check if we've reached the threshold for rebuilding the index
+                if self.deletion_count >= self.rebuild_threshold:
+                    logger.info(f"Deletion threshold reached ({self.deletion_count} deletions), "
+                                f"scheduling index rebuild for collection {self.id}")
+                    return "rebuild"  # Signal the parent service to rebuild
+
+                return True
+
+            # If soft deletion is disabled, proceed with standard removal
             logger.info(f"Removing document {doc_id} from collection {self.id}")
 
             # Get index in FAISS
             removed_index = self.id_to_index[doc_id]
+
+            # Remove from geo-spatial index if applicable
+            self.geo_index.remove_document(doc_id)
 
             # Remove from storage
             del self.documents[doc_id]
@@ -151,16 +198,17 @@ class SpladeCollection:
 
             # If collection is now empty, just reset the index
             if not self.documents:
-                self.index = faiss.IndexFlatIP(self.vocab_size)
+                self.index = FAISSIndexFactory.create_index(self.vocab_size)
                 self.next_index = 0
                 self._save_data()
                 return True
 
             # Otherwise, we need to rebuild the index
             # This is done by the parent service which has access to the model
-            return True
+            return "rebuild"  # Signal the parent service to rebuild
 
     def search(self, query_vector: np.ndarray, top_k: int, filter_metadata: Optional[Dict[str, Any]] = None,
+               geo_filter: Optional[Dict[str, Any]] = None,
                min_score: float = settings.MIN_SCORE_THRESHOLD) -> List[Dict[str, Any]]:
         """Search the collection with a query vector"""
         with self.lock:
@@ -168,14 +216,45 @@ class SpladeCollection:
             if self.index.ntotal == 0:
                 return []
 
+            # Process geo filter if provided
+            geo_filtered_ids = None
+            if geo_filter and "latitude" in geo_filter and "longitude" in geo_filter:
+                lat = geo_filter["latitude"]
+                lon = geo_filter["longitude"]
+                radius_km = geo_filter.get("radius_km", settings.GEO_DEFAULT_RADIUS_KM)
+
+                # Get IDs within radius
+                geo_filtered_ids = self.geo_index.search_radius(lat, lon, radius_km)
+
+                # If no documents match geo filter, return empty results
+                if not geo_filtered_ids:
+                    logger.debug(f"No documents found within {radius_km}km of ({lat}, {lon})")
+                    return []
+
+                logger.debug(
+                    f"Geo filter found {len(geo_filtered_ids)} documents within {radius_km}km of ({lat}, {lon})")
+
             # Normalize query vector
             query_vector_normalized = query_vector.copy()
             faiss.normalize_L2(query_vector_normalized.reshape(1, -1))
 
+            # For approximate indexes like IVF, make sure search parameters are set
+            if hasattr(self.index, 'nprobe'):
+                self.index.nprobe = settings.FAISS_SEARCH_NPROBE
+
             # Search FAISS index - get more results than needed to account for filtering
+            # Get even more if we have soft-deleted documents or geo filtering
+            extra_results = 3
+            if self.soft_delete_enabled and self.deleted_ids:
+                extra_results = max(5, len(self.deleted_ids) // 10)  # Adjust based on deletion count
+
+            if geo_filtered_ids:
+                # If geo filtering active, we need more results to ensure we have enough after filtering
+                extra_results = max(extra_results, len(geo_filtered_ids) // 5)
+                
             scores, indices = self.index.search(
-                query_vector_normalized.reshape(1, -1), 
-                min(top_k * 3, self.index.ntotal)  # Get extra results for filtering
+                query_vector_normalized.reshape(1, -1),
+                min(top_k * extra_results, self.index.ntotal)  # Get extra results for filtering
             )
 
             results = []
@@ -185,6 +264,15 @@ class SpladeCollection:
                     continue
 
                 doc_id = self.index_to_id[idx]
+
+                # Skip soft-deleted documents
+                if self.soft_delete_enabled and doc_id in self.deleted_ids:
+                    continue
+
+                # Skip documents not matching geo filter
+                if geo_filtered_ids is not None and doc_id not in geo_filtered_ids:
+                    continue
+                    
                 doc = self.documents[doc_id]
 
                 # Apply metadata filtering if specified
@@ -197,12 +285,33 @@ class SpladeCollection:
                     if skip:
                         continue
 
-                results.append({
+                # Prepare result with basic info
+                result = {
                     "id": doc.id,
                     "content": doc.content,
-                    "metadata": doc.metadata,
+                    "metadata": doc.metadata or {},
                     "score": float(scores[0][i])
-                })
+                }
+
+                # Add location to result if available
+                if doc.location:
+                    result["location"] = {
+                        "latitude": doc.location.latitude,
+                        "longitude": doc.location.longitude
+                    }
+
+                    # If geo search, calculate and add distance
+                    if geo_filter:
+                        coords = self.geo_index.get_location(doc_id)
+                        if coords:
+                            distance = self.geo_index._haversine_distance(
+                                geo_filter["latitude"],
+                                geo_filter["longitude"],
+                                coords[0], coords[1]
+                            )
+                            result["distance_km"] = round(distance, 2)
+
+                results.append(result)
 
                 # If we have enough results after filtering, stop
                 if len(results) >= top_k:
@@ -238,13 +347,22 @@ class SpladeCollection:
                     "documents": self.documents,
                     "id_to_index": self.id_to_index,
                     "index_to_id": self.index_to_id,
-                    "next_index": self.next_index
+                    "next_index": self.next_index,
+                    "index_type": self.index_type,
+                    "deleted_ids": self.deleted_ids,
+                    "deletion_count": self.deletion_count,
+                    "model_name": self.model_name,  # Save the model name
+                    # We don't save the geo_index directly, as it will be reconstructed from document locations
                 }, f)
 
             # Save FAISS index
             faiss.write_index(self.index, self.index_path)
 
-            logger.info(f"Collection {self.id} persisted to disk: {len(self.documents)} documents")
+            doc_count = len(self.documents)
+            deleted_count = len(self.deleted_ids) if self.soft_delete_enabled else 0
+            geo_count = len(self.geo_index.doc_to_coords)
+            logger.info(f"Collection {self.id} persisted to disk: {doc_count} documents "
+                        f"({deleted_count} soft-deleted, {geo_count} with location)")
 
     def _load_data(self):
         """Load collection data from disk"""
@@ -264,10 +382,70 @@ class SpladeCollection:
                 self.index_to_id = data["index_to_id"]
                 self.next_index = data["next_index"]
 
+                # Load soft deletion tracking if available
+                if "deleted_ids" in data:
+                    self.deleted_ids = data["deleted_ids"]
+                else:
+                    self.deleted_ids = set()
+
+                if "deletion_count" in data:
+                    self.deletion_count = data["deletion_count"]
+                else:
+                    self.deletion_count = 0
+
+                # Check if we need to migrate index type
+                if "index_type" in data:
+                    self.index_type = data["index_type"]
+
+                    # If configured index type is different from saved one,
+                    # we'll convert it after loading
+                    needs_conversion = self.index_type != settings.FAISS_INDEX_TYPE
+
+                # Load model name if available
+                if "model_name" in data:
+                    self.model_name = data["model_name"]
+
             # Load FAISS index
             self.index = faiss.read_index(self.index_path)
 
-            logger.info(f"Loaded collection {self.id} with {len(self.documents)} documents")
+            # Convert index type if needed and if setting has changed
+            if 'needs_conversion' in locals() and needs_conversion:
+                logger.info(f"Converting index from {self.index_type} to {settings.FAISS_INDEX_TYPE}")
+                # We would need to reconstruct vectors for conversion
+                # This is complex and left as a future enhancement
+                self.index_type = settings.FAISS_INDEX_TYPE
+
+            # Rebuild geo-spatial index from document locations
+            self.geo_index = GeoSpatialIndex(precision=settings.GEO_INDEX_PRECISION)
+            geo_count = 0
+
+            for doc_id, doc in self.documents.items():
+                # Skip documents marked as deleted
+                if self.soft_delete_enabled and doc_id in self.deleted_ids:
+                    continue
+
+                # Add locations to geo index
+                if hasattr(doc, 'location') and doc.location:
+                    self.geo_index.add_document(
+                        doc_id,
+                        doc.location.latitude,
+                        doc.location.longitude
+                    )
+                    geo_count += 1
+                # Legacy: check if location info is in metadata
+                elif doc.metadata and 'latitude' in doc.metadata and 'longitude' in doc.metadata:
+                    lat = doc.metadata['latitude']
+                    lon = doc.metadata['longitude']
+                    self.geo_index.add_document(doc_id, lat, lon)
+
+                    # Upgrade to new location field model
+                    doc.location = GeoCoordinates(latitude=lat, longitude=lon)
+                    geo_count += 1
+
+            doc_count = len(self.documents)
+            deleted_count = len(self.deleted_ids) if self.soft_delete_enabled else 0
+            logger.info(f"Loaded collection {self.id} with {doc_count} documents "
+                        f"({deleted_count} soft-deleted, {geo_count} with location)")
         except Exception as e:
             logger.error(f"Error loading data for collection {self.id}: {e}")
             logger.info(f"Starting with empty collection for {self.id}")
@@ -278,9 +456,10 @@ class SpladeService:
     SPLADE service with collection management
     """
 
-    def __init__(self, model_dir: str = settings.MODEL_DIR, data_dir: str = settings.DATA_DIR):
+    def __init__(self, model_name: str = settings.MODEL_NAME, data_dir: str = settings.DATA_DIR):
         """Initialize SPLADE service"""
-        self.model_dir = model_dir
+        # Format the model directory template with the actual model name
+        self.default_model_name = model_name
         self.data_dir = data_dir
 
         # Ensure data directory exists
@@ -289,28 +468,16 @@ class SpladeService:
         # Path for collections metadata
         self.collections_path = os.path.join(data_dir, "collections.pkl")
 
-        # Initialize tokenizer and model
-        logger.info(f"Loading model from {model_dir}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
-        self.model = AutoModelForMaskedLM.from_pretrained(model_dir)
+        # Model cache to avoid loading the same model multiple times
+        self.models = {}
+        self.tokenizers = {}
 
-        # Set device
-        if torch.backends.mps.is_available():
-            logger.info("Using MPS (Metal Performance Shaders) for GPU acceleration")
-            self.device = torch.device("mps")
-        elif torch.cuda.is_available():
-            logger.info("Using CUDA for GPU acceleration")
-            self.device = torch.device("cuda")
-        else:
-            logger.info("Using CPU for inference")
-            self.device = torch.device("cpu")
+        # Load the default model
+        self._load_model(model_name)
 
-        self.model.to(self.device)
-        self.model.eval()
-
-        # Get vocabulary size from the model
-        self.vocab_size = self.model.config.vocab_size
-        logger.info(f"Model vocabulary size: {self.vocab_size}")
+        # Get vocabulary size from the default model
+        self.vocab_size = self.models[model_name].config.vocab_size
+        logger.info(f"Default model vocabulary size: {self.vocab_size}")
 
         # Collection storage
         self.collections = {}  # id -> SpladeCollection
@@ -321,19 +488,100 @@ class SpladeService:
         # Load existing collections
         self._load_collections()
 
-    def encode_text(self, text: str) -> np.ndarray:
-        """Encode text into SPLADE sparse representation"""
-        inputs = self.tokenizer(
+    def _load_model(self, model_name: str) -> bool:
+        """Load a specific model and add to cache"""
+        if model_name in self.models:
+            # Model already loaded
+            return True
+
+        # Format the model directory
+        model_dir = settings.MODEL_DIR.format(model_name=model_name)
+
+        # Check if model exists, download if not and if auto-download is enabled
+        if settings.AUTO_DOWNLOAD_MODEL and not os.path.exists(os.path.join(model_dir, "config.json")):
+            logger.info(f"Model not found at {model_dir}, attempting to download...")
+            download_success = download_model_if_needed(model_dir, settings.MODEL_HF_ID)
+            if not download_success:
+                logger.error(f"Failed to download model {settings.MODEL_HF_ID} to {model_dir}")
+                return False
+
+        try:
+            # Initialize tokenizer and model
+            logger.info(f"Loading model from {model_dir}")
+            tokenizer = AutoTokenizer.from_pretrained(model_dir)
+            model = AutoModelForMaskedLM.from_pretrained(model_dir)
+
+            # Set device
+            if torch.backends.mps.is_available():
+                logger.info(f"Using MPS for model {model_name}")
+                device = torch.device("mps")
+            elif torch.cuda.is_available():
+                logger.info(f"Using CUDA for model {model_name}")
+                device = torch.device("cuda")
+            else:
+                logger.info(f"Using CPU for model {model_name}")
+                device = torch.device("cpu")
+
+            model.to(device)
+            model.eval()
+
+            # Store in cache
+            self.models[model_name] = model
+            self.tokenizers[model_name] = tokenizer
+
+            return True
+        except Exception as e:
+            logger.error(f"Error loading model {model_name}: {e}")
+            return False
+
+    def encode_text(self, text: str, model_name: Optional[str] = None) -> np.ndarray:
+        """
+        Encode text into SPLADE sparse representation
+        
+        Args:
+            text: Text to encode
+            model_name: Optional model name to use (defaults to collection's model or system default)
+        """
+        # Use the specified model or default
+        model_to_use = model_name or self.default_model_name
+
+        # Check if model is loaded
+        if model_to_use not in self.models:
+            # Try to load the model
+            if not self._load_model(model_to_use):
+                # If loading fails, fall back to the default model
+                logger.warning(
+                    f"Could not load model {model_to_use}, falling back to default {self.default_model_name}")
+                model_to_use = self.default_model_name
+
+        # Get the appropriate model and tokenizer
+        model = self.models[model_to_use]
+        tokenizer = self.tokenizers[model_to_use]
+
+        # Determine the device for this model
+        if torch.backends.mps.is_available():
+            device = torch.device("mps")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+
+        # Ensure model is on the right device
+        model.to(device)
+
+        # Tokenize the input
+        inputs = tokenizer(
             text,
             max_length=settings.MAX_LENGTH,
             padding="max_length",
             truncation=True,
             return_tensors="pt"
         )
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        inputs = {k: v.to(device) for k, v in inputs.items()}
 
+        # Generate the sparse representation
         with torch.no_grad():
-            outputs = self.model(**inputs, return_dict=True)
+            outputs = model(**inputs, return_dict=True)
 
         # Apply SPLADE pooling (log(1 + ReLU(x)))
         logits = outputs.logits
@@ -346,20 +594,42 @@ class SpladeService:
 
         return sparse_rep.cpu().numpy()[0]
 
-    def batch_encode_texts(self, texts: List[str]) -> List[np.ndarray]:
-        """Encode multiple texts in batches"""
+    def batch_encode_texts(self, texts: List[str], model_name: Optional[str] = None) -> List[np.ndarray]:
+        """
+        Encode multiple texts in batches
+        
+        Args:
+            texts: List of texts to encode
+            model_name: Optional model name to use
+        """
         results = []
         for text in texts:
-            vector = self.encode_text(text)
+            vector = self.encode_text(text, model_name)
             results.append(vector)
         return results
 
-    def create_collection(self, collection_id: str, name: str, description: Optional[str] = None) -> bool:
-        """Create a new collection"""
+    def create_collection(self, collection_id: str, name: str, description: Optional[str] = None,
+                          model_name: Optional[str] = None) -> bool:
+        """
+        Create a new collection
+        
+        Args:
+            collection_id: Unique ID for the collection
+            name: Display name for the collection
+            description: Optional description
+            model_name: Optional domain-specific model to use for this collection
+        """
         with self.lock:
             if collection_id in self.collections:
                 logger.warning(f"Collection with ID {collection_id} already exists")
                 return False
+
+            # If a specific model is requested, try to load it
+            if model_name and model_name not in self.models:
+                if not self._load_model(model_name):
+                    logger.warning(f"Could not load model {model_name} for collection {collection_id}, "
+                                   f"using default model {self.default_model_name}")
+                    model_name = None  # Reset to use default
 
             # Create new collection
             collection = SpladeCollection(
@@ -367,7 +637,8 @@ class SpladeService:
                 name=name,
                 description=description,
                 vocab_size=self.vocab_size,
-                data_dir=self.data_dir
+                data_dir=self.data_dir,
+                model_name=model_name
             )
 
             # Add to collections
@@ -376,7 +647,8 @@ class SpladeService:
             # Save collections metadata
             self._save_collections()
 
-            logger.info(f"Created collection {collection_id}")
+            logger.info(f"Created collection {collection_id}" +
+                        (f" with model {model_name}" if model_name else ""))
             return True
 
     def delete_collection(self, collection_id: str) -> bool:
@@ -414,6 +686,10 @@ class SpladeService:
             logger.warning(f"Collection with ID {collection_id} not found")
             return False
 
+        # Get the model name for this collection
+        collection = self.collections[collection_id]
+        model_name = collection.model_name
+
         # If auto_chunk is enabled and document is large, split it into chunks
         if auto_chunk:
             # Get document chunks
@@ -425,8 +701,8 @@ class SpladeService:
                 # Add each chunk
                 success = True
                 for chunk in chunks:
-                    # Encode document
-                    vector = self.encode_text(chunk.content)
+                    # Encode document with the appropriate model
+                    vector = self.encode_text(chunk.content, model_name)
 
                     # Add to collection (don't auto-chunk to avoid infinite recursion)
                     chunk_success = self.collections[collection_id].add_document(chunk, vector)
@@ -435,8 +711,8 @@ class SpladeService:
                 return success
 
         # If not auto-chunking or document is small enough
-        # Encode document
-        vector = self.encode_text(doc.content)
+        # Encode document with the appropriate model
+        vector = self.encode_text(doc.content, model_name)
 
         # Add to collection
         return self.collections[collection_id].add_document(doc, vector)
@@ -447,6 +723,10 @@ class SpladeService:
         if collection_id not in self.collections:
             logger.warning(f"Collection with ID {collection_id} not found")
             return 0
+
+        # Get the model name for this collection
+        collection = self.collections[collection_id]
+        model_name = collection.model_name
 
         added_count = 0
 
@@ -461,16 +741,16 @@ class SpladeService:
             if len(all_chunks) > len(docs):
                 logger.info(f"Split {len(docs)} documents into {len(all_chunks)} chunks")
 
-                # Encode all chunks
-                vectors = self.batch_encode_texts([chunk.content for chunk in all_chunks])
+                # Encode all chunks with the appropriate model
+                vectors = self.batch_encode_texts([chunk.content for chunk in all_chunks], model_name)
 
                 # Add chunks to collection
                 added_count = self.collections[collection_id].batch_add_documents(all_chunks, vectors)
                 return added_count
 
         # If not auto-chunking or no documents were chunked
-        # Encode documents
-        vectors = self.batch_encode_texts([doc.content for doc in docs])
+        # Encode documents with the appropriate model
+        vectors = self.batch_encode_texts([doc.content for doc in docs], model_name)
 
         # Add to collection
         return self.collections[collection_id].batch_add_documents(docs, vectors)
@@ -485,33 +765,65 @@ class SpladeService:
         # Remove from collection
         result = self.collections[collection_id].remove_document(doc_id)
 
-        # If collection needs index rebuild, do it here
-        if result and self.collections[collection_id].documents:
+        # Handle the result from remove_document
+        if result == "rebuild":
+            # If the collection signals that we need to rebuild the index
+            logger.info(f"Rebuilding index for collection {collection_id} as requested")
+            self._rebuild_collection_index(collection_id)
+            return True
+        elif result and not self.collections[collection_id].soft_delete_enabled:
+            # For non-soft deletion, always rebuild
             self._rebuild_collection_index(collection_id)
 
-        return result
+        return bool(result)  # Convert any truthy value to actual boolean
 
     def _rebuild_collection_index(self, collection_id: str):
         """Rebuild the FAISS index for a collection after document removal"""
         with self.lock:
             collection = self.collections[collection_id]
 
-            # Encode all documents
-            docs = list(collection.documents.values())
-            vectors = self.batch_encode_texts([doc.content for doc in docs])
+            # Get the model name for this collection
+            model_name = collection.model_name
+
+            # Get active documents (excluding soft-deleted ones)
+            if collection.soft_delete_enabled and collection.deleted_ids:
+                docs = [doc for doc_id, doc in collection.documents.items()
+                        if doc_id not in collection.deleted_ids]
+
+                # Also clean up the deleted IDs list and reset deletion counter
+                for doc_id in list(collection.deleted_ids):
+                    if doc_id not in collection.documents:
+                        collection.deleted_ids.remove(doc_id)
+                collection.deletion_count = 0
+
+                logger.info(f"Rebuilding index for collection {collection_id}, "
+                            f"excluding {len(collection.deleted_ids)} soft-deleted documents")
+            else:
+                docs = list(collection.documents.values())
+
+            # Encode all documents with collection-specific model
+            vectors = self.batch_encode_texts([doc.content for doc in docs], model_name)
 
             # Create new mappings
             id_to_index = {}
             index_to_id = {}
 
-            # Reset the index
-            collection.index = faiss.IndexFlatIP(self.vocab_size)
-
-            # Add vectors
+            # Create a new index using the factory
             if vectors:
                 vectors_array = np.vstack(vectors)
                 faiss.normalize_L2(vectors_array)
+
+                # Create appropriate index type with training data
+                collection.index = FAISSIndexFactory.create_index(
+                    self.vocab_size,
+                    vectors_array
+                )
+
+                # Add vectors to the index
                 collection.index.add(vectors_array)
+            else:
+                # Empty collection
+                collection.index = FAISSIndexFactory.create_index(self.vocab_size)
 
             # Update mappings
             for i, doc in enumerate(docs):
@@ -522,15 +834,19 @@ class SpladeService:
             collection.id_to_index = id_to_index
             collection.index_to_id = index_to_id
             collection.next_index = len(docs)
-
+            # Update index type to match what we created
+            collection.index_type = settings.FAISS_INDEX_TYPE
+            
             # Save collection
             collection._save_data()
 
             logger.info(f"Rebuilt index for collection {collection_id} with {len(docs)} documents")
 
     def search(self, collection_id: str, query: str, top_k: int = settings.DEFAULT_TOP_K,
-               filter_metadata: Optional[Dict[str, Any]] = None, min_score: float = settings.MIN_SCORE_THRESHOLD) -> \
-    Tuple[List[Dict[str, Any]], float]:
+               filter_metadata: Optional[Dict[str, Any]] = None,
+               geo_filter: Optional[Dict[str, Any]] = None,
+               min_score: float = settings.MIN_SCORE_THRESHOLD) -> \
+            Tuple[List[Dict[str, Any]], float]:
         """Search for documents in a collection"""
         # Check if collection exists
         if collection_id not in self.collections:
@@ -540,11 +856,17 @@ class SpladeService:
         # Start timing
         start_time = time.time()
 
-        # Encode query
-        query_vector = self.encode_text(query)
+        # Get the model name for this collection
+        collection = self.collections[collection_id]
+        model_name = collection.model_name
+
+        # Encode query using the appropriate model
+        query_vector = self.encode_text(query, model_name)
 
         # Search collection
-        results = self.collections[collection_id].search(query_vector, top_k, filter_metadata, min_score)
+        results = self.collections[collection_id].search(
+            query_vector, top_k, filter_metadata, geo_filter, min_score
+        )
 
         # End timing
         query_time = (time.time() - start_time) * 1000  # in milliseconds
@@ -553,18 +875,25 @@ class SpladeService:
 
     def search_all_collections(self, query: str, top_k: int = settings.DEFAULT_TOP_K,
                                filter_metadata: Optional[Dict[str, Any]] = None,
+                               geo_filter: Optional[Dict[str, Any]] = None,
                                min_score: float = settings.MIN_SCORE_THRESHOLD) -> Dict[str, Any]:
         """Search across all collections"""
         # Start timing
         start_time = time.time()
 
-        # Encode query
-        query_vector = self.encode_text(query)
-
         # Search all collections
         all_results = {}
         for collection_id, collection in self.collections.items():
-            collection_results = collection.search(query_vector, top_k, filter_metadata, min_score)
+            # Get the model name for this collection
+            model_name = collection.model_name
+
+            # Encode query using the appropriate model
+            query_vector = self.encode_text(query, model_name)
+
+            # Search this collection
+            collection_results = collection.search(
+                query_vector, top_k, filter_metadata, geo_filter, min_score
+            )
             if collection_results:
                 all_results[collection_id] = collection_results
 
@@ -624,7 +953,8 @@ class SpladeService:
                 {
                     "id": collection.id,
                     "name": collection.name,
-                    "description": collection.description
+                    "description": collection.description,
+                    "model_name": collection.model_name  # Save the model name for each collection
                 }
                 for collection in self.collections.values()
             ]
@@ -648,6 +978,8 @@ class SpladeService:
                 collection_id = collection_data["id"]
                 name = collection_data["name"]
                 description = collection_data["description"]
+                # Get model name if available, otherwise use None (will use default)
+                model_name = collection_data.get("model_name")
 
                 # Create collection object
                 collection = SpladeCollection(
@@ -655,10 +987,18 @@ class SpladeService:
                     name=name,
                     description=description,
                     vocab_size=self.vocab_size,
-                    data_dir=self.data_dir
+                    data_dir=self.data_dir,
+                    model_name=model_name
                 )
 
                 self.collections[collection_id] = collection
+
+                # Preload the model if it's not already loaded
+                if model_name and model_name not in self.models:
+                    try:
+                        self._load_model(model_name)
+                    except Exception as e:
+                        logger.warning(f"Could not load model {model_name} for collection {collection_id}: {e}")
 
             logger.info(f"Loaded {len(self.collections)} collections")
         except Exception as e:
@@ -669,7 +1009,7 @@ class SpladeService:
 # Initialize the SPLADE service as a singleton
 try:
     splade_service = SpladeService()
-    logger.info(f"SPLADE service initialized with model directory: {settings.MODEL_DIR}")
+    logger.info(f"SPLADE service initialized with default model: {splade_service.default_model_name}")
 except Exception as e:
     logger.error(f"Error initializing SPLADE service: {e}")
     # Create a placeholder service that will be properly initialized when the model is available

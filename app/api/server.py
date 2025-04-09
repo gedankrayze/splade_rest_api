@@ -28,7 +28,8 @@ app = FastAPI(
 
 # Log startup info
 logger.info(f"Starting SPLADE Content Server v{APP_VERSION}")
-logger.info(f"Model directory: {settings.MODEL_DIR}")
+logger.info(f"Model name: {settings.MODEL_NAME}")
+logger.info(f"Model directory template: {settings.MODEL_DIR}")
 logger.info(f"Min score threshold: {settings.MIN_SCORE_THRESHOLD}")
 logger.info(f"Default results per query: {settings.DEFAULT_TOP_K}")
 
@@ -58,7 +59,8 @@ async def root():
     from app.core.splade_service import splade_service
 
     # Check if model directory exists
-    model_exists = os.path.exists(settings.MODEL_DIR)
+    model_dir = settings.MODEL_DIR.format(model_name=settings.MODEL_NAME)
+    model_exists = os.path.exists(model_dir)
 
     # Check if SPLADE service is initialized
     service_initialized = splade_service is not None
@@ -68,7 +70,8 @@ async def root():
         "version": "1.0.0",
         "status": "operational" if service_initialized else "degraded",
         "model": {
-            "path": settings.MODEL_DIR,
+            "name": settings.MODEL_NAME,
+            "path": model_dir,
             "exists": model_exists,
             "loaded": service_initialized
         },

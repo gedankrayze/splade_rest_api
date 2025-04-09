@@ -50,9 +50,23 @@ class MemSploraClient:
         response.raise_for_status()
         return response.json()
 
-    def create_collection(self, collection_id: str, name: str, description: Optional[str] = None) -> Collection:
-        """Create a new collection."""
-        data = {"id": collection_id, "name": name, "description": description}
+    def create_collection(self, collection_id: str, name: str, description: Optional[str] = None,
+                          model_name: Optional[str] = None) -> Collection:
+        """
+        Create a new collection.
+        
+        Args:
+            collection_id: Unique ID for the collection
+            name: Display name for the collection
+            description: Optional description
+            model_name: Optional domain-specific model to use for this collection
+        """
+        data = {
+            "id": collection_id,
+            "name": name,
+            "description": description,
+            "model_name": model_name
+        }
         response = requests.post(f'{self.base_url}/collections', headers=self.headers, json=data)
         response.raise_for_status()
         return response.json()

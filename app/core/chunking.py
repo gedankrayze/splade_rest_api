@@ -5,6 +5,7 @@ Document chunking service for processing large documents
 import re
 from typing import List, Dict, Any
 
+from app.core.markdown_chunker import MarkdownAwareChunker
 from app.models.schema import Document
 
 
@@ -22,6 +23,26 @@ class DocumentChunker:
         self.overlap_size = overlap_size
         self.avg_word_length = avg_word_length
 
+        # Initialize markdown-aware chunker
+        self.markdown_chunker = MarkdownAwareChunker(
+            max_chunk_size=max_chunk_size,
+            overlap_size=overlap_size,
+            avg_word_length=avg_word_length
+        )
+
+        # Regular expressions for content type detection
+        self.markdown_patterns = [
+            re.compile(r'^\s*#'),  # Headings
+            re.compile(r'\|[-:| ]+\|'),  # Tables
+            re.compile(r'```'),  # Code blocks
+            re.compile(r'\*\*.*?\*\*'),  # Bold
+            re.compile(r'\*.*?\*'),  # Italic
+            re.compile(r'\[.*?\]\(.*?\)'),  # Links
+            re.compile(r'^>\s'),  # Blockquotes
+            re.compile(r'^\s*[-*+]\s'),  # Lists
+            re.compile(r'^\s*\d+\.\s')  # Numbered lists
+        ]
+
     def chunk_document(self, document: Document) -> List[Document]:
         """
         Split a document into chunks based on semantic boundaries
@@ -31,6 +52,33 @@ class DocumentChunker:
             
         Returns:
             List of document chunks with appropriate metadata
+        """
+        # Check if the content is Markdown
+        is_markdown = self._detect_markdown(document.content)
+
+        # Use appropriate chunking strategy
+        if is_markdown:
+            return self.markdown_chunker.chunk_document(document)
+        else:
+            return self._chunk_plain_text(document)
+
+    def _detect_markdown(self, content: str) -> bool:
+        """
+        Detect if the content is Markdown by looking for common Markdown patterns
+        """
+        if not content:
+            return False
+
+        # Check for common Markdown patterns
+        for pattern in self.markdown_patterns:
+            if pattern.search(content):
+                return True
+
+        return False
+
+    def _chunk_plain_text(self, document: Document) -> List[Document]:
+        """
+        Original chunking method for plain text content
         """
         content = document.content
 

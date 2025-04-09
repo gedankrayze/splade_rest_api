@@ -18,6 +18,7 @@ This project provides a REST API for managing document collections and performin
 - **Soft Deletion**: Efficient document removal with delayed index rebuilding
 - **Large Document Handling**: Special processing for extremely large documents with tables
 - **Geo-Spatial Search**: Find documents based on geographical proximity
+- **Domain-Specific Models**: Support for using different SPLADE models for different collections
 
 ## Installation
 
@@ -119,9 +120,15 @@ API documentation is automatically generated and available at `http://localhost:
 ### Create a Collection
 
 ```bash
+# Basic collection
 curl -X POST "http://localhost:8000/collections" \
      -H "Content-Type: application/json" \
      -d '{"id": "technical-docs", "name": "Technical Documentation", "description": "Technical documentation for our products"}'
+
+# Collection with domain-specific model
+curl -X POST "http://localhost:8000/collections" \
+     -H "Content-Type: application/json" \
+     -d '{"id": "legal-docs", "name": "Legal Documentation", "description": "Legal contracts and documents", "model_name": "legal-splade"}'
 ```
 
 ### Add a Document
@@ -174,6 +181,26 @@ Special handling for extremely large documents:
 - Adaptive chunking strategies based on content type
 - Optimized for documents of any size, including 140+ page documents
 
+### Domain-Specific Models
+
+Support for domain-specific SPLADE models:
+
+- Assign different models to different collections based on domain needs
+- Models are loaded dynamically and cached for performance
+- Each collection can use either the default model or a domain-specific model
+- Queries are automatically encoded with the appropriate model per collection
+
+For example, to create a collection with a domain-specific model:
+
+```bash
+curl -X POST "http://localhost:8000/collections" \
+     -H "Content-Type: application/json" \
+     -d '{"id": "medical-docs", "name": "Medical Documentation", "description": "Medical records and reports", "model_name": "medical-splade-model"}'
+```
+
+This allows for more accurate search within specific domains while maintaining flexibility across your entire content
+library.
+
 ## Additional Documentation
 
 For more detailed information, see the documentation in the `docs/` directory:
@@ -182,6 +209,7 @@ For more detailed information, see the documentation in the `docs/` directory:
 - [Large Document Handling](docs/large_document_handling.md)
 - [Performance Optimizations](docs/performance_optimizations.md)
 - [Geo-Spatial Search](docs/geo_spatial_search.md)
+- [Domain-Specific Models](docs/domain_specific_models.md)
 
 ## License
 

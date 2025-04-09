@@ -30,11 +30,19 @@ tasks:
         source .venv/bin/activate
         uvicorn app.api.server:app --host 0.0.0.0 --port 3000 --reload
 
-  client:
+  add-document:
+    requires:
+      vars:
+        - file
+    cmds:
+      - |
+        source .venv/bin/activate
+        python client/memsplora_cli.py add-document --mode "advanced" --collection-id iirds "{{.file}}"
+  search:
     requires:
       vars:
         - query
     cmds:
       - |
         source .venv/bin/activate
-        python client/memsplora_client.py --collection iirds "{{.query}}" --min-score 0.8
+        python client/memsplora_cli.py search --mode "advanced" --collection-id iirds "{{.query}}" --min-score 0.8 --top-k 5

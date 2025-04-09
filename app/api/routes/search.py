@@ -24,6 +24,10 @@ async def search_collection(
         top_k: int = Query(settings.DEFAULT_TOP_K, description="Number of results to return"),
         metadata_filter: Optional[str] = Query(None, description="JSON string of metadata filters"),
         min_score: float = Query(settings.MIN_SCORE_THRESHOLD, description="Minimum score threshold for results"),
+        latitude: Optional[float] = Query(None, description="Latitude for geo search", ge=-90.0, le=90.0),
+        longitude: Optional[float] = Query(None, description="Longitude for geo search", ge=-180.0, le=180.0),
+        radius_km: Optional[float] = Query(settings.GEO_DEFAULT_RADIUS_KM, description="Search radius in kilometers",
+                                           gt=0),
         splade_service: SpladeService = Depends(get_splade_service)
 ):
     """Search for documents in a specific collection"""
@@ -45,8 +49,19 @@ async def search_collection(
                 detail="Invalid metadata filter JSON"
             )
 
+    # Create geo filter if coordinates provided
+    geo_filter = None
+    if latitude is not None and longitude is not None:
+        geo_filter = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "radius_km": radius_km
+        }
+
     # Perform search
-    results, query_time = splade_service.search(collection_id, query, top_k, filter_metadata)
+    results, query_time = splade_service.search(
+        collection_id, query, top_k, filter_metadata, geo_filter, min_score
+    )
 
     return {
         "results": results,
@@ -61,6 +76,10 @@ async def search_all_collections(
         top_k: int = Query(settings.DEFAULT_TOP_K, description="Number of results per collection"),
         metadata_filter: Optional[str] = Query(None, description="JSON string of metadata filters"),
         min_score: float = Query(settings.MIN_SCORE_THRESHOLD, description="Minimum score threshold for results"),
+        latitude: Optional[float] = Query(None, description="Latitude for geo search", ge=-90.0, le=90.0),
+        longitude: Optional[float] = Query(None, description="Longitude for geo search", ge=-180.0, le=180.0),
+        radius_km: Optional[float] = Query(settings.GEO_DEFAULT_RADIUS_KM, description="Search radius in kilometers",
+                                           gt=0),
         splade_service: SpladeService = Depends(get_splade_service)
 ):
     """Search across all collections"""
@@ -75,7 +94,18 @@ async def search_all_collections(
                 detail="Invalid metadata filter JSON"
             )
 
+    # Create geo filter if coordinates provided
+    geo_filter = None
+    if latitude is not None and longitude is not None:
+        geo_filter = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "radius_km": radius_km
+        }
+
     # Perform search
-    results = splade_service.search_all_collections(query, top_k, filter_metadata, min_score)
+    results = splade_service.search_all_collections(
+        query, top_k, filter_metadata, geo_filter, min_score
+    )
 
     return results

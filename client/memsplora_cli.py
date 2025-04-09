@@ -3,9 +3,9 @@
 import argparse
 import json
 import sys
-from typing import Optional, Dict, Any
 
 from memsplora_client import MemSploraClient
+
 
 def handle_collections(args: argparse.Namespace, client: MemSploraClient) -> None:
     if args.action == "list":
@@ -13,7 +13,7 @@ def handle_collections(args: argparse.Namespace, client: MemSploraClient) -> Non
     elif args.action == "get":
         print(json.dumps(client.get_collection(args.id), indent=2))
     elif args.action == "create":
-        result = client.create_collection(args.id, args.name, args.description)
+        result = client.create_collection(args.id, args.name, args.description, args.model_name)
         print(json.dumps(result, indent=2))
     elif args.action == "delete":
         client.delete_collection(args.id)
@@ -81,6 +81,7 @@ def main() -> None:
     create_collection.add_argument("id", help="Collection ID")
     create_collection.add_argument("name", help="Collection name")
     create_collection.add_argument("--description", help="Collection description")
+    create_collection.add_argument("--model-name", help="Domain-specific model name for this collection")
     
     delete_collection = collections_subparsers.add_parser("delete")
     delete_collection.add_argument("id", help="Collection ID")

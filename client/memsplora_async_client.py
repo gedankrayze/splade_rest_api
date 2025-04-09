@@ -70,9 +70,23 @@ class MemSploraAsyncClient:
             response.raise_for_status()
             return await response.json()
 
-    async def create_collection(self, collection_id: str, name: str, description: Optional[str] = None) -> Collection:
-        """Create a new collection."""
-        data = {"id": collection_id, "name": name, "description": description}
+    async def create_collection(self, collection_id: str, name: str, description: Optional[str] = None,
+                                model_name: Optional[str] = None) -> Collection:
+        """
+        Create a new collection.
+        
+        Args:
+            collection_id: Unique ID for the collection
+            name: Display name for the collection
+            description: Optional description
+            model_name: Optional domain-specific model to use for this collection
+        """
+        data = {
+            "id": collection_id,
+            "name": name,
+            "description": description,
+            "model_name": model_name
+        }
         async with self.session.post(f'{self.base_url}/collections', headers=self.headers, json=data) as response:
             response.raise_for_status()
             return await response.json()
