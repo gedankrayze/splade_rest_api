@@ -158,27 +158,4 @@ class MemSploraClient:
         return response.json()
 
 
-if __name__ == '__main__':
-    # Example usage
-    client = MemSploraClient('http://localhost:3000')
-    
-    # Create a collection
-    collection = client.create_collection(
-        'sample-collection',
-        'Sample Collection',
-        'A sample collection for testing'
-    )
-    print("Created collection:", collection)
-    
-    # Add a document
-    doc = {
-        "id": "doc1",
-        "content": "This is a sample document",
-        "metadata": {"category": "test"}
-    }
-    result = client.add_document('sample-collection', doc)
-    print("Added document:", result)
-    
-    # Perform a search
-    search_results = client.advanced_search('sample-collection', 'sample document')
-    print("Search results:", search_results)
+
