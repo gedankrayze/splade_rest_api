@@ -25,7 +25,7 @@ This project provides a REST API for managing document collections and performin
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/splade_rest_api.git
+git clone https://github.com/gedankrayze/splade_rest_api.git
 cd splade_rest_api
 ```
 
