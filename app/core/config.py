@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "SPLADE Content Server"
     PORT: int = 3000
 
+    # LLM integration settings
+    LLM_DEFAULT_MODEL: str = "gpt-4o-mini"
+    LLM_ENABLED: bool = True
+
     # SPLADE model settings
     MODEL_NAME: str = "Splade_PP_en_v2"  # Name for the model directory
     MODEL_DIR: str = "./models/{model_name}"  # Template with {model_name} placeholder

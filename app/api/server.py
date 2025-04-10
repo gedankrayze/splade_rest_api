@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.middleware import ErrorHandlerMiddleware
-from app.api.routes import documents, search, collections, advanced_search
+from app.api.routes import documents, search, collections, advanced_search, query
 from app.core.config import settings
 
 # Configure logging
@@ -50,6 +50,7 @@ app.include_router(collections.router, prefix="/collections", tags=["collections
 app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(advanced_search.router, prefix="/advanced-search", tags=["advanced-search"])
+app.include_router(query.router, prefix="/query", tags=["query"])
 
 @app.get("/", tags=["root"])
 async def root():
@@ -79,5 +80,9 @@ async def root():
             "max_length": settings.MAX_LENGTH,
             "data_dir": settings.DATA_DIR,
             "default_top_k": settings.DEFAULT_TOP_K
+        },
+        "llm": {
+            "enabled": settings.LLM_ENABLED,
+            "default_model": settings.LLM_DEFAULT_MODEL
         }
     }

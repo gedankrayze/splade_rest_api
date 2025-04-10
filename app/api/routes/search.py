@@ -64,6 +64,10 @@ async def search_collection(
     # Calculate the total number of results to fetch
     total_to_fetch = page * page_size
 
+    # If top_k is explicitly specified and larger than our calculation, use that value instead
+    if top_k > total_to_fetch:
+        total_to_fetch = top_k
+
     # Perform search with the calculated total
     results, query_time = splade_service.search(
         collection_id, query, total_to_fetch, filter_metadata, geo_filter, min_score
@@ -131,6 +135,10 @@ async def search_all_collections(
 
     # Calculate total results to fetch per collection for pagination
     total_to_fetch = page * page_size
+
+    # If top_k is explicitly specified and larger than our calculation, use that value instead
+    if top_k > total_to_fetch:
+        total_to_fetch = top_k
 
     # Perform search with the calculated total
     results = splade_service.search_all_collections(

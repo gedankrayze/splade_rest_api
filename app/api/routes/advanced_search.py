@@ -3,6 +3,7 @@ API routes for advanced search functionality with deduplication and score thresh
 """
 
 import json
+import logging
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status, Depends
@@ -11,9 +12,47 @@ from app.api.dependencies import get_splade_service
 from app.core.config import settings
 from app.core.search_utils import deduplicate_and_threshold_results, merge_chunk_content
 from app.core.splade_service import SpladeService  # For type hints only
+from app.llm.client import AsyncLLMClient
 from app.models.schema import SearchResponse, PaginationInfo
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
+
+
+async def expand_query_with_llm(query: str, model: str = None) -> str:
+    """Use LLM to expand the search query with synonyms and related terms"""
+    # Use default model if none provided
+    model_to_use = model or settings.LLM_DEFAULT_MODEL or "gpt-4o-mini"
+
+    # Create LLM client
+    llm_client = AsyncLLMClient()
+
+    prompt = f"""
+    I need to search for information in a document about: "{query}"
+    
+    Please create an expanded search query that includes:
+    - Synonyms for key terms
+    - Related technical terms
+    - Alternative ways to express the same concept
+    
+    Only provide the expanded search query without explanations.
+    """
+
+    try:
+        response = await llm_client.response(
+            user_input=prompt,
+            model=model_to_use,
+            temperature=0.3,
+            max_tokens=200
+        )
+
+        expanded_query = response.get("text", "").strip()
+        return expanded_query if expanded_query else query
+    except Exception as e:
+        # Log error and return original query
+        logger.error(f"Query expansion failed: {e}")
+        return query
 
 
 @router.get("/{collection_id}", response_model=SearchResponse)
@@ -32,6 +71,8 @@ async def advanced_search(
         longitude: Optional[float] = Query(None, description="Longitude for geo search", ge=-180.0, le=180.0),
         radius_km: Optional[float] = Query(settings.GEO_DEFAULT_RADIUS_KM, description="Search radius in kilometers",
                                            gt=0),
+        query_expansion: bool = Query(False, description="Use LLM to expand the query"),
+        expansion_model: Optional[str] = Query(None, description="Optional LLM model to use for query expansion"),
         splade_service: SpladeService = Depends(get_splade_service)
 ):
     """
@@ -49,6 +90,14 @@ async def advanced_search(
             detail=f"Collection with ID {collection_id} not found"
         )
 
+    # Expand query if requested
+    search_query = query
+    if query_expansion and settings.LLM_ENABLED:
+        expanded_query = await expand_query_with_llm(query, expansion_model)
+        if expanded_query and expanded_query != query:
+            logger.info(f"Query expanded from '{query}' to '{expanded_query}'")
+            search_query = expanded_query
+    
     # Parse metadata filter if provided
     filter_metadata = None
     if metadata_filter:
@@ -73,10 +122,14 @@ async def advanced_search(
     # Calculate the effective number of results to fetch, considering pagination
     # We multiply by 3 to account for filtering, deduplication, and score thresholding
     effective_top_k = min(page * page_size * 3, 500)  # Get more but cap at 500
+
+    # If top_k is explicitly specified and larger than our calculation, use that instead
+    if top_k > effective_top_k:
+        effective_top_k = top_k
     
     results, query_time = splade_service.search(
         collection_id,
-        query,
+        search_query,  # Use expanded query if available
         effective_top_k,
         filter_metadata,
         geo_filter
@@ -113,11 +166,18 @@ async def advanced_search(
         total_pages=total_pages
     )
 
-    return {
+    response_data = {
         "results": paginated_results,
         "query_time_ms": query_time,
         "pagination": pagination
     }
+
+    # Add expanded query to response if it was used
+    if query_expansion and search_query != query:
+        response_data["expanded_query"] = search_query
+        response_data["original_query"] = query
+
+    return response_data
 
 
 @router.get("/", response_model=Dict[str, Any])
@@ -135,6 +195,8 @@ async def advanced_search_all(
         longitude: Optional[float] = Query(None, description="Longitude for geo search", ge=-180.0, le=180.0),
         radius_km: Optional[float] = Query(settings.GEO_DEFAULT_RADIUS_KM, description="Search radius in kilometers",
                                            gt=0),
+        query_expansion: bool = Query(False, description="Use LLM to expand the query"),
+        expansion_model: Optional[str] = Query(None, description="Optional LLM model to use for query expansion"),
         splade_service: SpladeService = Depends(get_splade_service)
 ):
     """
@@ -145,6 +207,14 @@ async def advanced_search_all(
     - merge_chunks: Merge content from chunks of the same document
     - latitude/longitude/radius_km: Filter results by geographic location
     """
+    # Expand query if requested
+    search_query = query
+    if query_expansion and settings.LLM_ENABLED:
+        expanded_query = await expand_query_with_llm(query, expansion_model)
+        if expanded_query and expanded_query != query:
+            logger.info(f"Query expanded from '{query}' to '{expanded_query}'")
+            search_query = expanded_query
+            
     # Parse metadata filter if provided
     filter_metadata = None
     if metadata_filter:
@@ -165,14 +235,17 @@ async def advanced_search_all(
             "radius_km": radius_km
         }
 
-    # For pagination, we need to get more results than requested
     # Calculate the effective number of results to fetch, considering pagination
     # We multiply by 3 to account for filtering, deduplication, and score thresholding
     effective_top_k = min(page * page_size * 3, 500)  # Get more but cap at 500
-    
+
+    # If top_k is explicitly specified and larger than our calculation, use that instead
+    if top_k > effective_top_k:
+        effective_top_k = top_k
+
     # Perform raw search
     search_results = splade_service.search_all_collections(
-        query,
+        search_query,  # Use expanded query if available
         effective_top_k,  # Get more results for filtering
         filter_metadata,
         geo_filter,
@@ -222,8 +295,15 @@ async def advanced_search_all(
                 "total_pages": total_pages
             }
 
-    return {
+    response_data = {
         "results": processed_results,
         "pagination": pagination_info,
         "query_time_ms": search_results["query_time_ms"]
     }
+
+    # Add expanded query to response if it was used
+    if query_expansion and search_query != query:
+        response_data["expanded_query"] = search_query
+        response_data["original_query"] = query
+
+    return response_data
