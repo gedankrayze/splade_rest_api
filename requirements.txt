@@ -8,4 +8,5 @@ faiss-cpu
 numpy
 tqdm
 python-multipart
-
+openai
+anthropic
