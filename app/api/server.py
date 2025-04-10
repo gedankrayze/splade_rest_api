@@ -15,7 +15,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # App version
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -67,7 +67,7 @@ async def root():
 
     return {
         "service": "SPLADE Content Server",
-        "version": "1.0.0",
+        "version": APP_VERSION,
         "status": "operational" if service_initialized else "degraded",
         "model": {
             "name": settings.MODEL_NAME,

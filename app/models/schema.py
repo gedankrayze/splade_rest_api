@@ -60,10 +60,18 @@ class GeoSearchParams(BaseModel):
     radius_km: float = Field(default=10.0, gt=0, description="Search radius in kilometers")
 
 
+class PaginationInfo(BaseModel):
+    """Pagination information"""
+    page: int = Field(..., description="Current page number")
+    page_size: int = Field(..., description="Number of results per page")
+    total_results: int = Field(..., description="Total number of results")
+    total_pages: int = Field(..., description="Total number of pages")
+
 class SearchResponse(BaseModel):
     """Search response model"""
     results: List[SearchResult] = Field(..., description="Search results")
     query_time_ms: float = Field(..., description="Query execution time in milliseconds")
+    pagination: Optional[PaginationInfo] = Field(default=None, description="Pagination information")
 
 
 class Collection(BaseModel):

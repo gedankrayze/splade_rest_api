@@ -19,6 +19,7 @@ This project provides a REST API for managing document collections and performin
 - **Large Document Handling**: Special processing for extremely large documents with tables
 - **Geo-Spatial Search**: Find documents based on geographical proximity
 - **Domain-Specific Models**: Support for using different SPLADE models for different collections
+- **Pagination Support**: Navigate through large result sets with built-in pagination
 
 ## Installation
 
@@ -151,6 +152,12 @@ curl -X GET "http://localhost:8000/search/technical-docs?query=sparse%20lexical%
 curl -X GET "http://localhost:8000/search/technical-docs?query=sparse%20lexical%20retrieval&top_k=5&metadata_filter=%7B%22category%22%3A%22AI%22%7D"
 ```
 
+### Search with Pagination
+
+```bash
+curl -X GET "http://localhost:8000/search/technical-docs?query=sparse%20lexical%20retrieval&page=2&page_size=10"
+```
+
 ## Performance Optimizations
 
 ### FAISS Index Types
@@ -203,13 +210,20 @@ library.
 
 ## Additional Documentation
 
-For more detailed information, see the documentation in the `docs/` directory:
+For more detailed information, see the documentation in the `docs/` directory and articles in the `articles/` directory:
+
+### Documentation
 
 - [Document Chunking and Deduplication](docs/chunking_and_deduplication.md)
 - [Large Document Handling](docs/large_document_handling.md)
 - [Performance Optimizations](docs/performance_optimizations.md)
 - [Geo-Spatial Search](docs/geo_spatial_search.md)
 - [Domain-Specific Models](docs/domain_specific_models.md)
+
+### Articles
+
+- [Getting Started with SPLADE Content Server](articles/getting-started.md)
+- [Using Pagination with the SPLADE Content Server API](articles/pagination.md)
 
 ## License
 

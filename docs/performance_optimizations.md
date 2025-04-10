@@ -103,6 +103,48 @@ new_index = FAISSIndexFactory.convert_to_index_type(old_index, target_type, vect
 - **IVF** adds a small overhead for cluster centroids
 - **HNSW** has the largest memory footprint due to graph structures
 
+## Efficient Pagination
+
+The system now supports efficient pagination for search results, optimizing memory usage and performance for large
+result sets:
+
+### How It Works
+
+1. Search results can be paginated with `page` and `page_size` parameters
+2. The system calculates total result count and total pages
+3. Only the requested page of results is returned, reducing response size
+4. For optimum performance, the system retrieves more results than needed for accurate counts, but only returns the
+   requested page
+
+### Benefits
+
+- **Reduced Memory Usage**: Only the current page of results is processed and returned
+- **Faster API Responses**: Smaller response payloads improve transmission times
+- **Better User Experience**: Enables efficient navigation of large result sets
+- **Accurate Result Counts**: Provides total counts for implementing pagination controls
+
+### Usage Example
+
+```bash
+# Get the second page of results with 10 results per page
+curl -X GET "http://localhost:8000/search/collection-id?query=search%20term&page=2&page_size=10"
+```
+
+### Response Format
+
+```json
+{
+  "results": [...],  // Only contains the current page of results
+  "query_time_ms": 45.67,
+  "pagination": {
+    "page": 2,
+    "page_size": 10,
+    "total_results": 45,
+    "total_pages": 5
+  }
+}
+```
+
 ## Future Improvements
 
 1. **Incremental Updates**: Allow adding/removing vectors without full rebuild for IVF indexes
@@ -110,6 +152,7 @@ new_index = FAISSIndexFactory.convert_to_index_type(old_index, target_type, vect
 3. **Background Processing**: Move index rebuilding to background tasks
 4. **Index Compression**: Implement vector compression for reduced memory usage
 5. **Hybrid Indexes**: Support combined approaches (e.g., IVF-HNSW) for optimal performance
+6. **Cursor-based Pagination**: Implement cursor-based pagination for more efficient large result set navigation
 
 These optimizations provide significant performance improvements, especially for large collections with frequent
-updates.
+updates and searches.

@@ -11,7 +11,7 @@ from app.api.dependencies import get_splade_service
 from app.core.config import settings
 from app.core.search_utils import deduplicate_and_threshold_results, merge_chunk_content
 from app.core.splade_service import SpladeService  # For type hints only
-from app.models.schema import SearchResponse
+from app.models.schema import SearchResponse, PaginationInfo
 
 router = APIRouter()
 
@@ -22,6 +22,8 @@ async def advanced_search(
         collection_id: str,
         query: str = Query(..., description="Search query"),
         top_k: int = Query(settings.DEFAULT_TOP_K, description="Number of results to return"),
+        page: int = Query(1, description="Page number", ge=1),
+        page_size: int = Query(settings.DEFAULT_TOP_K, description="Results per page", ge=1),
         min_score: float = Query(0.3, description="Minimum similarity score threshold (0-1)"),
         metadata_filter: Optional[str] = Query(None, description="JSON string of metadata filters"),
         deduplicate: bool = Query(True, description="Deduplicate results from same document"),
@@ -67,9 +69,11 @@ async def advanced_search(
             "radius_km": radius_km
         }
 
-    # Perform search with minimum score threshold 
-    # But get more results than requested to allow for filtering
-    effective_top_k = min(top_k * 3, 100)  # Get more but cap at 100
+    # For pagination, we need to get more results than requested
+    # Calculate the effective number of results to fetch, considering pagination
+    # We multiply by 3 to account for filtering, deduplication, and score thresholding
+    effective_top_k = min(page * page_size * 3, 500)  # Get more but cap at 500
+    
     results, query_time = splade_service.search(
         collection_id,
         query,
@@ -92,12 +96,27 @@ async def advanced_search(
         if has_chunks:
             results = merge_chunk_content(results)
 
-    # Limit to requested number
-    results = results[:top_k]
+    # Calculate total results for pagination
+    total_results = len(results)
+    total_pages = (total_results + page_size - 1) // page_size  # Ceiling division
+
+    # Apply pagination
+    start_idx = (page - 1) * page_size
+    end_idx = min(start_idx + page_size, total_results)
+    paginated_results = results[start_idx:end_idx]
+
+    # Create pagination info
+    pagination = PaginationInfo(
+        page=page,
+        page_size=page_size,
+        total_results=total_results,
+        total_pages=total_pages
+    )
 
     return {
-        "results": results,
-        "query_time_ms": query_time
+        "results": paginated_results,
+        "query_time_ms": query_time,
+        "pagination": pagination
     }
 
 
@@ -106,6 +125,8 @@ async def advanced_search(
 async def advanced_search_all(
         query: str = Query(..., description="Search query"),
         top_k: int = Query(settings.DEFAULT_TOP_K, description="Number of results per collection"),
+        page: int = Query(1, description="Page number", ge=1),
+        page_size: int = Query(settings.DEFAULT_TOP_K, description="Results per page", ge=1),
         min_score: float = Query(0.3, description="Minimum similarity score threshold (0-1)"),
         metadata_filter: Optional[str] = Query(None, description="JSON string of metadata filters"),
         deduplicate: bool = Query(True, description="Deduplicate results from same document"),
@@ -144,10 +165,15 @@ async def advanced_search_all(
             "radius_km": radius_km
         }
 
+    # For pagination, we need to get more results than requested
+    # Calculate the effective number of results to fetch, considering pagination
+    # We multiply by 3 to account for filtering, deduplication, and score thresholding
+    effective_top_k = min(page * page_size * 3, 500)  # Get more but cap at 500
+    
     # Perform raw search
     search_results = splade_service.search_all_collections(
-        query, 
-        top_k * 3,  # Get more results for filtering
+        query,
+        effective_top_k,  # Get more results for filtering
         filter_metadata,
         geo_filter,
         min_score
@@ -156,6 +182,7 @@ async def advanced_search_all(
     # Process each collection's results
     all_results = search_results["results"]
     processed_results = {}
+    pagination_info = {}
 
     for collection_id, results in all_results.items():
         # Apply post-processing
@@ -174,11 +201,29 @@ async def advanced_search_all(
             if has_chunks:
                 processed = merge_chunk_content(processed)
 
-        # Limit to requested number and add to results
-        if processed:
-            processed_results[collection_id] = processed[:top_k]
+        # Calculate total results for pagination
+        total_results = len(processed)
+        total_pages = (total_results + page_size - 1) // page_size  # Ceiling division
+
+        # Apply pagination
+        start_idx = (page - 1) * page_size
+        end_idx = min(start_idx + page_size, total_results)
+        paginated_results = processed[start_idx:end_idx]
+
+        # Add to results if we have any
+        if paginated_results:
+            processed_results[collection_id] = paginated_results
+
+            # Add pagination info for this collection
+            pagination_info[collection_id] = {
+                "page": page,
+                "page_size": page_size,
+                "total_results": total_results,
+                "total_pages": total_pages
+            }
 
     return {
         "results": processed_results,
+        "pagination": pagination_info,
         "query_time_ms": search_results["query_time_ms"]
     }
