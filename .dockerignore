@@ -1,0 +1,10 @@
+.idea/
+.git/
+.venv/
+articles/
+docs/
+tests/
+*.pyc
+*.pyo
+*.pyd
+__pycache__/

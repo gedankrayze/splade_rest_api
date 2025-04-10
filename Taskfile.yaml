@@ -48,3 +48,12 @@ tasks:
       - |
         source .venv/bin/activate
         python client/memsplora_cli.py search --mode "advanced" --collection-id iirds "{{.query}}" --min-score 0.8 --top-k 5
+
+  docker-build:
+    cmds:
+      - docker build -t memsplora:latest .
+
+  docker-run:
+    cmds:
+      - docker run -d --name memsplora -p 3000:3000 memsplora:latest
+      - docker exec -it memsplora bash
