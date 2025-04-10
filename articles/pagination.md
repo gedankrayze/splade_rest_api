@@ -210,6 +210,3 @@ chunks.
 The pagination feature in the SPLADE Content Server API makes it easier to work with large result sets efficiently. By
 using these pagination parameters, your applications can provide a better user experience when navigating through search
 results while maintaining good performance.
-
-For more information about the SPLADE Content Server API, refer to the API documentation available at
-`http://localhost:8000/docs`.
